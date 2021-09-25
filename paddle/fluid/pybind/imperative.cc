@@ -342,6 +342,16 @@ static bool IsNumpyType(PyObject *obj) {
          type_name == "numpy.int32" || type_name == "numpy.int16";
 }
 
+static bool IsIntegerScalarTensor(
+    const std::shared_ptr<imperative::VarBase> &var) {
+  const auto &tensor = var->Var().Get<framework::LoDTensor>();
+  if (tensor.numel() == 1) {
+    return tensor.type() == framework::proto::VarType::INT32 ||
+           tensor.type() == framework::proto::VarType::INT64;
+  }
+  return false;
+}
+
 static bool PyCheckTensor(PyObject *obj) {
   return py::isinstance<imperative::VarBase>(obj);
 }
@@ -410,6 +420,39 @@ static bool PyCheckInteger(PyObject *obj) {
 #endif
 }
 
+// Get scaler from tensor, may convert the data type
+// Currently, only support float32, float64, int32, int64, bool
+// the numel of tensor must be 1
+template <class T>
+static T GetScalarFromTensor(const std::shared_ptr<imperative::VarBase> &var) {
+  const auto &tensor = var->Var().Get<framework::LoDTensor>();
+  if (tensor.numel() == 1) {
+    if (tensor.type() == framework::proto::VarType::INT32) {
+      return static_cast<T>(operators::GetValue<int32_t>(&tensor));
+    } else if (tensor.type() == framework::proto::VarType::INT64) {
+      return static_cast<T>(operators::GetValue<int64_t>(&tensor));
+    }
+    if (tensor.type() == framework::proto::VarType::FP32) {
+      return static_cast<T>(operators::GetValue<float>(&tensor));
+    } else if (tensor.type() == framework::proto::VarType::FP64) {
+      return static_cast<T>(operators::GetValue<double>(&tensor));
+    } else if (tensor.type() == framework::proto::VarType::BOOL) {
+      return static_cast<T>(operators::GetValue<bool>(&tensor));
+    } else {
+      PADDLE_THROW(platform::errors::InvalidArgument(
+          "Type error, the input of GetScalarFromTensor only allows tensor"
+          "(float32, float64, int32, int64, bool), "
+          "please check the type of input tensor."));
+    }
+  } else {
+    PADDLE_THROW(platform::errors::InvalidArgument(
+        "Get scalar error, when get scalar form tensor, the tensor numel is "
+        "expected to 1, "
+        "but received: %d.",
+        tensor.numel()));
+  }
+}
+
 static Py_ssize_t GetSliceIndexFromTensor(
     const std::shared_ptr<imperative::VarBase> &tensor_index) {
   const auto &tensor = tensor_index->Var().Get<framework::LoDTensor>();
@@ -429,6 +472,20 @@ static Py_ssize_t GetSliceIndexFromTensor(
         "but received %d.",
         tensor.numel()));
   }
+}
+
+std::shared_ptr<imperative::VarBase> where_index(
+    const std::shared_ptr<imperative::VarBase> &input) {
+  const auto &tracer = imperative::GetCurrentTracer();
+
+  auto out = std::shared_ptr<imperative::VarBase>(
+      new imperative::VarBase(tracer->GenerateUniqueName()));
+
+  imperative::NameVarBaseMap ins = {{"Condition", {input}}};
+  imperative::NameVarBaseMap outs = {{"Out", {out}}};
+  tracer->TraceOp("where_index", ins, outs, {});
+
+  return out;
 }
 
 // NOTE(zhiqiu): Revised version of PySlice_GetIndices. From:
@@ -504,8 +561,10 @@ static void ParseIndexingSlice(
     std::vector<int> *slice_axes, std::vector<int> *slice_starts,
     std::vector<int> *slice_ends, std::vector<int> *slice_strides,
     std::vector<int> *decrease_axis, std::vector<int> *none_axes,
-    std::vector<int> *infer_flags, std::vector<int> *list_select_idxs,
-    bool *list_select_flag) {
+    std::vector<int> *infer_flags,
+    std::vector<std::pair<int, std::shared_ptr<imperative::VarBase>>>
+        *advanced_indices,
+    bool *advanced_indices_flag) {
   // We allow indexing by Integers, Slices, Ellipsis, None, tuples of those
   // types, and list of Bool and Integers.
   // wrap to tuple
@@ -535,6 +594,27 @@ static void ParseIndexingSlice(
     }
   }
 
+  auto parse_intger_indices = [&](int start, int dim, int dim_len) {
+    auto s_t = start;
+    start = start < 0 ? start + dim_len : start;
+    if (start >= dim_len || start < 0) {
+      std::string str_error_message =
+          "The starting index " + std::to_string(s_t) +
+          " of slice is out of bounds in tensor " + std::to_string(dim) +
+          "-th axis, it should be in the range of [" +
+          std::to_string(-dim_len) + ", " + std::to_string(dim_len) + ")";
+      // py::index_error is corresponding to IndexError in Python
+      // Used to indicate out of bounds access in __getitem__, __setitem__
+      throw py::index_error(str_error_message);
+    }
+    slice_axes->push_back(dim);
+    slice_starts->push_back(start);
+    slice_ends->push_back(start + 1);
+    slice_strides->push_back(1);
+    decrease_axis->push_back(dim);
+    dim++;
+  };
+
   for (int i = 0, dim = 0; i < size; ++i) {
     PyObject *slice_item = PyTuple_GetItem(index, i);
 
@@ -543,30 +623,12 @@ static void ParseIndexingSlice(
     if (PyCheckInteger(slice_item) || IsNumpyType(slice_item)) {
       // integer, PyLong_AsLong supports both int and long
       int start = static_cast<int>(PyLong_AsLong(slice_item));
-      auto s_t = start;
-      start = start < 0 ? start + dim_len : start;
-      if (start >= dim_len || start < 0) {
-        std::string str_error_message =
-            "The starting index " + std::to_string(s_t) +
-            " of slice is out of bounds in tensor " + std::to_string(dim) +
-            "-th axis, it shound be in the range of [" +
-            std::to_string(-dim_len) + ", " + std::to_string(dim_len) + ")";
-        // py::index_error is corresponding to IndexError in Python
-        // Used to indicate out of bounds access in __getitem__, __setitem__
-        throw py::index_error(str_error_message);
-      }
-      slice_axes->push_back(dim);
-      slice_starts->push_back(start);
-      slice_ends->push_back(start + 1);
-      slice_strides->push_back(1);
-      decrease_axis->push_back(dim);
-      dim++;
+      parse_intger_indices(start, dim, dim_len);
     } else if (PySlice_Check(slice_item)) {
       // slice item
       Py_ssize_t start, end, step;
       PySliceObject *p = reinterpret_cast<PySliceObject *>(slice_item);
       _PySlice_GetIndices(p, dim_len, &start, &end, &step);
-
       // :: or : or 0:dim_len:1
       if (start == 0 && end == dim_len && step == 1) {
         dim++;
@@ -581,7 +643,29 @@ static void ParseIndexingSlice(
       dim += rank - specified_dims;
     } else if (slice_item == Py_None) {
       none_axes->push_back(dim);
-    } else if (PyList_Check(slice_item)) {
+    } else if (PyCheckTensor(slice_item)) {
+      auto item_var =
+          py::cast<std::shared_ptr<imperative::VarBase>>(slice_item);
+      auto type = item_var->DataType();
+      if (IsIntegerScalarTensor(item_var)) {  // convert
+        auto start = GetScalarFromTensor<int>(item_var);
+        parse_intger_indices(start, dim, dim_len);
+      } else if (item_var->DataType() == framework::proto::VarType::BOOL) {
+        advanced_indices->emplace_back(dim, where_index(item_var));
+      } else if (item_var->DataType() == framework::proto::VarType::INT32 ||
+                 item_var->DataType() == framework::proto::VarType::INT64) {
+        advanced_indices->emplace_back(dim, item_var);
+      } else {
+        PADDLE_THROW(platform::errors::InvalidArgument(
+            "The type of index tensor only allows int32, int64 and bool, "
+            "please check the type of index tensor."));
+      }
+      dim++;
+    } else if (PySequence_Check(slice_item)) {
+      if (!py::isinstance<py::array>(slice_item)) {
+        VLOG(2) << "index is py::array";
+        slice_item = py::array(slice_item);
+      }
       *list_select_flag = true;
       PADDLE_ENFORCE_EQ(
           size, 1,
@@ -1104,14 +1188,19 @@ void BindImperative(py::module *m_ptr) {
              std::vector<int> slice_axes, slice_starts, slice_ends,
                  slice_strides, decrease_axis, none_axes, infer_flags,
                  list_select_idxs;
-             // if index is a list, list_select_flag will be true
-             bool list_select_flag = false;
+
+             std::vector<std::pair<int, std::shared_ptr<imperative::VarBase>>>
+                 advanced_indices;
+             // if index contains advanced indices(list[bool or int]) ,
+             // advanced_indices_flag will be true
+             bool advanced_indices_flag = false;
+
              auto tensor =
                  self->MutableVar()->GetMutable<framework::LoDTensor>();
              ParseIndexingSlice(tensor, _index.ptr(), &slice_axes,
                                 &slice_starts, &slice_ends, &slice_strides,
                                 &decrease_axis, &none_axes, &infer_flags,
-                                &list_select_idxs, &list_select_flag);
+                                &advanced_indices, &advanced_indices_flag);
              // release gil and do tracing
              py::gil_scoped_release release;
              const auto &tracer = imperative::GetCurrentTracer();

@@ -412,6 +412,75 @@ void SetTensorFromPyArray(framework::Tensor *self, const py::object &obj,
   }
 }
 
+template <typename P>
+void SetTensorFromPySequence(framework::Tensor *self, PyObject *obj,
+                             const P &place) {
+  PADDLE_ENFORCE_EQ(
+      PySequence_Check(obj), true,
+      platform::errors::InvalidArgument("Input PyObject type error, "
+                                        "the PyObject only allows PySequence, "
+                                        "please check your input data type."));
+
+  auto seq_type = InferPySequenceType(obj);
+}
+
+// Currently, InferPySequenceType is just used for infering index type,
+// so we only infer int and bool type for PySequence.
+framework::proto::VarType::Type InferPySequenceType(PyObject *obj) {
+  auto length = PySequence_Length(obj);
+  if (length <= 0) {
+    PADDLE_THROW(platform::errors::InvalidArgument(
+        "The length of input PySequence expects to be greater than 0, ",
+        "but received %d.", length));
+  }
+  if (PyBool_Check(obj)) {
+    return framework::proto::VarType::BOOL;
+  }
+  if (PyLong_Check(obj)) {
+    return framework::proto::VarType::INT64;
+  }
+  if (PyInt_Check(obj)) {
+    return framework::proto::VarType::INT32;
+  }
+  if (PySequence_Check(obj)) {
+    framework::proto::VarType::Type type;
+    for (auto i = 0; i < length; i++) {
+      PyObject *item = PySequence_GetItem(obj, i);
+      if (item == obj) {
+        PADDLE_THROW(platform::errors::InvalidArgument(
+            "Self-referential lists are not allowed"));
+      }
+      auto item_type = InferPySequenceType(item);
+      type = i == 0 ? item_type : CommonType(type, item_type);
+    }
+    return type;
+  }
+
+  PADDLE_THROW(platform::errors::InvalidArgument(
+      "Type Error, the type of index element allows int32, int64 and bool, "
+      "but receive %s.",
+      Py_TYPE(obj)->tp_name));
+
+  return framework::proto::VarType::INT32;
+}
+
+// Currently, only support int and bool type
+framework::proto::VarType::Type CommonType(framework::proto::VarType::Type t1,
+                                           framework::proto::VarType::Type t2) {
+  if (t1 == t2) {
+    return t1;
+  }
+  if (t1 == framework::proto::VarType::INT64 ||
+      t2 == framework::proto::VarType::INT64) {
+    return framework::proto::VarType::INT64;
+  }
+  if (t1 == framework::proto::VarType::INT32 ||
+      t2 == framework::proto::VarType::INT32) {
+    return framework::proto::VarType::INT32;
+  }
+  return framework::proto::VarType::BOOL;
+}
+
 template <typename T, size_t D>
 void _sliceCompute(const framework::Tensor *in, framework::Tensor *out,
                    const platform::CPUDeviceContext &ctx,
