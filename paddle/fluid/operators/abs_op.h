@@ -35,6 +35,7 @@ class AbsKernel : public framework::OpKernel<T> {
     auto* out_data = out->mutable_data<math::Real<T>>(
         context.GetPlace(), size_t(x->numel() * sizeof(math::Real<T>)));
 
+    // comment
     auto& dev_ctx = context.template device_context<DeviceContext>();
     platform::ForRange<DeviceContext> for_range(dev_ctx, numel);
     math::AbsFunctor<T> functor(x_data, out_data, numel);
