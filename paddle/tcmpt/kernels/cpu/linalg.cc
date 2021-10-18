@@ -21,6 +21,8 @@
 #include "paddle/fluid/operators/math/blas.h"
 #include "paddle/fluid/platform/complex.h"
 
+#include "paddle/tcmpt/kernels/common/math/matmul_funtion.h"
+
 namespace pt {
 
 template <typename T>
@@ -51,7 +53,19 @@ void matmul(const CPUContext& dev_ctx,
             const DenseTensor& y,
             bool transpose_x,
             bool transpose_y,
-            DenseTensor* out) {}
+            DenseTensor* out) {
+  PADDLE_ENFORCE_NE(framework::product(X->dims()),
+                    0,
+                    platform::errors::InvalidArgument(
+                        "The Input(X) dims size must not be equal 0,"
+                        " but reviced dims size is 0. "));
+  PADDLE_ENFORCE_NE(framework::product(Y->dims()),
+                    0,
+                    platform::errors::InvalidArgument(
+                        "The Input(Y) dims size must not be equal 0,"
+                        " but reviced dims size is 0. "));
+  MatMulFunction<CPUContext, T>(X, Y, Out, trans_x, trans_y, ctx);
+}
 
 }  // namespace pt
 
