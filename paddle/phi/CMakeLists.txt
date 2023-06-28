@@ -1,7 +1,7 @@
 # phi auto cmake utils
 include(phi)
 
-# paddle experimental common components
+# paddle common components
 add_subdirectory(common)
 
 # phi (low level) api headers: include
@@ -22,6 +22,11 @@ add_subdirectory(tests)
 # phi capi
 if(WITH_CUSTOM_DEVICE)
   add_subdirectory(capi)
+endif()
+
+# phi capi
+if(WITH_LITE)
+  add_subdirectory(lite)
 endif()
 
 # make an unity target for compile deps
