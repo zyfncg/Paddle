@@ -52,7 +52,7 @@ def parse_args():
         '--onednn_cache_capacity',
         type=int,
         default=0,
-        help='Mkldnn cache capacity. The default value in Python API is 15, which can slow down int8 models. Default 0 means unlimited cache.',
+        help='Onednn cache capacity. The default value in Python API is 15, which can slow down int8 models. Default 0 means unlimited cache.',
     )
 
     test_args, args = parser.parse_known_args(namespace=unittest)
@@ -200,21 +200,21 @@ class TestLstmModelPTQ(unittest.TestCase):
         return hx_acc, ctc_acc, fps
 
     def test_lstm_model(self):
-        if not core.is_compiled_with_mkldnn():
+        if not core.is_compiled_with_onednn():
             return
 
         fp32_model = test_case_args.fp32_model
-        assert (
-            fp32_model
-        ), 'The FP32 model path cannot be empty. Please, use the --fp32_model option.'
+        assert fp32_model, (
+            'The FP32 model path cannot be empty. Please, use the --fp32_model option.'
+        )
         quant_model = test_case_args.quant_model
-        assert (
-            quant_model
-        ), 'The quant model path cannot be empty. Please, use the --quant_model option.'
+        assert quant_model, (
+            'The quant model path cannot be empty. Please, use the --quant_model option.'
+        )
         infer_data = test_case_args.infer_data
-        assert (
-            infer_data
-        ), 'The dataset path cannot be empty. Please, use the --infer_data option.'
+        assert infer_data, (
+            'The dataset path cannot be empty. Please, use the --infer_data option.'
+        )
         num_threads = test_case_args.num_threads
         onednn_cache_capacity = test_case_args.onednn_cache_capacity
         warmup_iter = test_case_args.warmup_iter

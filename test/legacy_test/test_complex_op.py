@@ -15,7 +15,7 @@
 import unittest
 
 import numpy as np
-from op_test import OpTest
+from op_test import OpTest, get_device_place, is_custom_device
 
 import paddle
 from paddle import static
@@ -152,8 +152,8 @@ class TestComplexAPI(unittest.TestCase):
 class OutTest(unittest.TestCase):
     def setUp(self):
         paddle.disable_static()
-        if core.is_compiled_with_cuda():
-            self.place = core.CUDAPlace(0)
+        if core.is_compiled_with_cuda() or is_custom_device():
+            self.place = get_device_place()
         else:
             self.place = core.CPUPlace()
 
@@ -258,6 +258,44 @@ class OutTest(unittest.TestCase):
         np.testing.assert_equal(z2, None)
         np.testing.assert_equal(z3, None)
         np.testing.assert_equal(z4, None)
+
+
+class TestComplexOut(unittest.TestCase):
+    def setUp(self):
+        paddle.disable_static()
+        self.shape = [3, 4]
+        self.real_np = np.random.rand(*self.shape).astype(np.float32)
+        self.imag_np = np.random.rand(*self.shape).astype(np.float32)
+        self.test_types = ["out"]
+
+    def do_test(self, test_type):
+        real = paddle.to_tensor(self.real_np, stop_gradient=False)
+        imag = paddle.to_tensor(self.imag_np, stop_gradient=False)
+
+        if test_type == 'raw':
+            result = paddle.complex(real, imag)
+            result.real().mean().backward()
+            return result, real.grad, imag.grad
+        elif test_type == 'out':
+            out = paddle.empty(self.shape, dtype='complex64')
+            out.stop_gradient = False
+            paddle.complex(real, imag, out=out)
+            out.real().mean().backward()
+            return out, real.grad, imag.grad
+        else:
+            raise ValueError(f"Unknown test type: {test_type}")
+
+    def test_out(self):
+        out_std, real_grad_std, imag_grad_std = self.do_test('raw')
+        for test_type in self.test_types:
+            out, real_grad, imag_grad = self.do_test(test_type)
+            np.testing.assert_allclose(out.numpy(), out_std.numpy(), rtol=1e-20)
+            np.testing.assert_allclose(
+                real_grad.numpy(), real_grad_std.numpy(), rtol=1e-20
+            )
+            np.testing.assert_allclose(
+                imag_grad.numpy(), imag_grad_std.numpy(), rtol=1e-20
+            )
 
 
 if __name__ == "__main__":

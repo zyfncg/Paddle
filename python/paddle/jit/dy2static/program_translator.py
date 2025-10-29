@@ -432,8 +432,6 @@ class StaticFunction(Generic[_InputT, _RetT]):
         self._program_trans = ProgramTranslator()
         self._kwargs = kwargs
         self._training = True
-        self._cuda_graph_capture_mode = ""
-        self._cuda_graph_pool_id = 0
         self._property = kwargs.get("property", False)
         # Note: Record the patched method name for rollback.
         self._patched_name = None
@@ -672,9 +670,9 @@ class StaticFunction(Generic[_InputT, _RetT]):
             if self._patched_name is not None
             else self._dygraph_function.__name__
         )
-        assert (
-            fn_name in self.class_instance._original_funcs
-        ), f"Not Found function '{fn_name}' in class '{self.class_instance.__class__}'."
+        assert fn_name in self.class_instance._original_funcs, (
+            f"Not Found function '{fn_name}' in class '{self.class_instance.__class__}'."
+        )
         func = self.class_instance._original_funcs[fn_name]
         setattr(self.class_instance, fn_name, func.__get__(self.class_instance))
         return getattr(self.class_instance, fn_name)
@@ -710,7 +708,6 @@ class StaticFunction(Generic[_InputT, _RetT]):
                 self._dygraph_function, self._input_spec, **self._kwargs
             )
             copied_static_fn._training = self._training
-            copied_static_fn._cuda_graph_pool_id = self._cuda_graph_pool_id
             copied_static_fn._program_cache = self._program_cache
             copied_static_fn._descriptor_cache = self._descriptor_cache
             copied_static_fn._patched_name = self._patched_name
@@ -847,11 +844,6 @@ class ASTStaticFunction(StaticFunction[_InputT, _RetT]):
                 partial_program_layer.training = self.class_instance.training
             else:
                 partial_program_layer.training = self._training
-
-            partial_program_layer._cuda_graph_capture_mode = (
-                self._cuda_graph_capture_mode
-            )
-            partial_program_layer._cuda_graph_pool_id = self._cuda_graph_pool_id
 
             # 3. return outputs.
             try:
@@ -1642,7 +1634,6 @@ class ProgramCache:
         self._recent_cache_key = None
 
     def _build_once(self, cache_key):
-
         if use_pir_api():
             concrete_program = ConcreteProgram.pir_from_func_spec(
                 func_spec=cache_key.function_spec,
@@ -1734,9 +1725,9 @@ class ProgramCache:
         return self._caches[item_id]
 
     def last(self):
-        assert (
-            len(self._caches) >= 1
-        ), "No valid cached program in ProgramCache."
+        assert len(self._caches) >= 1, (
+            "No valid cached program in ProgramCache."
+        )
         assert self._recent_key is not None
         return self._recent_key, self._caches[self._recent_key]
 

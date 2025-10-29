@@ -83,6 +83,11 @@ bool DeviceInterface::IsBFloat16Supported(size_t dev_id) {
   return false;
 }
 
+bool DeviceInterface::IsDnnAvailable(size_t dev_id) {
+  VLOG(10) << Type() << " is dnn available: " << false;
+  return false;
+}
+
 void* DeviceInterface::InitEigenDevice(const Place& place,
                                        phi::stream::stream_t stream,
                                        phi::Allocator* allocator) {
@@ -458,6 +463,30 @@ void DeviceInterface::ProfilerStopTracing(phi::TraceEventCollector* collector,
 
 void DeviceInterface::ProfilerCollectTraceData(
     phi::TraceEventCollector* collector, uint64_t start_ns, void* user_data) {
+  INTERFACE_UNIMPLEMENT;
+}
+
+void DeviceInterface::InitBlasHandle(size_t dev_id,
+                                     void** blas_handle,
+                                     phi::stream::stream_t stream) {
+  INTERFACE_UNIMPLEMENT;
+}
+
+void DeviceInterface::BlasSetMathMode(size_t dev_id,
+                                      void* blas_handle,
+                                      int math_mode) {
+  INTERFACE_UNIMPLEMENT;
+}
+
+void DeviceInterface::InitBlasLtHandle(size_t dev_id, void** blaslt_handle) {
+  INTERFACE_UNIMPLEMENT;
+}
+
+void DeviceInterface::DestroyBlasHandle(size_t dev_id, void* blas_handle) {
+  INTERFACE_UNIMPLEMENT;
+}
+
+void DeviceInterface::DestroyBlasLtHandle(size_t dev_id, void* blaslt_handle) {
   INTERFACE_UNIMPLEMENT;
 }
 

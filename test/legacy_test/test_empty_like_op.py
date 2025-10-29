@@ -15,7 +15,7 @@
 import unittest
 
 import numpy as np
-from op_test import convert_uint16_to_float
+from op_test import convert_uint16_to_float, get_device_place, is_custom_device
 from utils import dygraph_guard, static_guard
 
 import paddle
@@ -193,8 +193,8 @@ class TestEmptyLikeAPI_Static(TestEmptyLikeAPICommon):
                 out = paddle.empty_like(data_x)
 
                 place = (
-                    paddle.CUDAPlace(0)
-                    if core.is_compiled_with_cuda()
+                    get_device_place()
+                    if (core.is_compiled_with_cuda() or is_custom_device())
                     else paddle.CPUPlace()
                 )
                 exe = paddle.static.Executor(place)
@@ -228,8 +228,8 @@ class TestEmptyLikeAPI_StaticForFP16Op(TestEmptyLikeAPICommon):
 
     def test_static_graph(self):
         with static_guard():
-            if paddle.base.core.is_compiled_with_cuda():
-                place = paddle.CUDAPlace(0)
+            if paddle.base.core.is_compiled_with_cuda() or is_custom_device():
+                place = get_device_place()
                 with paddle.static.program_guard(
                     paddle.static.Program(), paddle.static.Program()
                 ):
@@ -261,8 +261,8 @@ class TestEmptyLikeAPI_StaticForBF16Op(TestEmptyLikeAPICommon):
 
     def test_static_graph(self):
         with static_guard():
-            if paddle.base.core.is_compiled_with_cuda():
-                place = paddle.CUDAPlace(0)
+            if paddle.base.core.is_compiled_with_cuda() or is_custom_device():
+                place = get_device_place()
                 with paddle.static.program_guard(
                     paddle.static.Program(), paddle.static.Program()
                 ):
@@ -281,6 +281,49 @@ class TestEmptyLikeAPI_StaticForBF16Op(TestEmptyLikeAPICommon):
                 self.dst_dtype = self.dtype
                 self.dst_shape = x.shape
                 self.__check_out__(res[0])
+
+
+class TestEmptyLikeAPI_Alias(unittest.TestCase):
+    def setUp(self):
+        paddle.disable_static()
+
+    def test_check_output(self):
+        """
+        Test the alias of empty_like function.
+        ``empty_like(x=x)`` is equivalent to ``empty_like(input=x)``
+        """
+        shape_cases = [
+            [2],
+            [2, 4],
+            [2, 4, 8],
+        ]
+        dtype_cases = [
+            None,  # test default dtype
+            "float32",
+            "float64",
+            "int32",
+            "int64",
+            "bool",
+        ]
+
+        for shape in shape_cases:
+            for dtype in dtype_cases:
+                x = paddle.rand(shape)
+                for param_alias in ["x", "input"]:
+                    if dtype is None:
+                        out = paddle.empty_like(**{param_alias: x})
+                        expected_shape = x.shape
+                        expected_dtype = x.dtype
+                    else:
+                        out = paddle.empty_like(**{param_alias: x}, dtype=dtype)
+                        expected_shape = x.shape
+                        expected_dtype = paddle.to_tensor(
+                            [1], dtype=dtype
+                        ).dtype
+
+                    # Verify shape and dtype
+                    self.assertEqual(out.shape, expected_shape)
+                    self.assertEqual(out.dtype, expected_dtype)
 
 
 if __name__ == '__main__':

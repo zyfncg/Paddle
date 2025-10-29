@@ -17,8 +17,6 @@ import unittest
 
 import numpy as np
 from op_test import OpTest
-
-sys.path.append("../deprecated/legacy_test")
 from test_softmax_op import stable_softmax
 
 import paddle
@@ -528,7 +526,6 @@ class TestWarpCTCOpFp64(OpTest):
 
 
 class TestWarpCTCOpError(unittest.TestCase):
-
     def test_errors(self):
         paddle.enable_static()
         main_program = paddle.static.Program()

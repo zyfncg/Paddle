@@ -17,8 +17,6 @@ limitations under the License. */
 #include "glog/logging.h"
 
 #include "paddle/phi/common/amp_type_traits.h"
-#include "paddle/phi/common/complex.h"
-#include "paddle/phi/common/float16.h"
 #include "paddle/phi/core/dense_tensor.h"
 #include "paddle/phi/core/tensor_utils.h"
 #include "paddle/phi/kernels/expand_kernel.h"
@@ -1430,8 +1428,7 @@ compute_pow_grad_dx(T x, T y, T out, T dout) {
   if (y == static_cast<T>(0.0)) return static_cast<T>(0.0);
   MPType x_val = static_cast<MPType>(x);
   MPType y_val = static_cast<MPType>(y);
-  return static_cast<T>(static_cast<MPType>(dout) * y_val *
-                        pow(x_val, y_val - 1));
+  return dout * static_cast<T>(y_val * pow(x_val, y_val - 1));
 }
 template <typename T, typename MPType>
 HOSTDEVICE typename std::enable_if<std::is_integral<T>::value, T>::type
@@ -1448,8 +1445,7 @@ compute_pow_grad_dy(T x, T y, T out, T dout) {
     return static_cast<T>(0);
   MPType x_val = static_cast<MPType>(x);
   MPType y_val = static_cast<MPType>(y);
-  return static_cast<T>(static_cast<MPType>(dout) * log(x_val) *
-                        pow(x_val, y_val));
+  return dout * static_cast<T>(log(x_val) * pow(x_val, y_val));
 }
 #else
 template <typename T, typename MPType>
@@ -1457,8 +1453,7 @@ HOSTDEVICE T compute_pow_grad_dx(T x, T y, T out UNUSED, T dout) {
   if (y == static_cast<T>(0.0)) return static_cast<T>(0.0);
   MPType x_val = static_cast<MPType>(x);
   MPType y_val = static_cast<MPType>(y);
-  return static_cast<T>(static_cast<MPType>(dout) * y_val *
-                        std::pow(x_val, y_val - 1));
+  return dout * static_cast<T>(y_val * std::pow(x_val, y_val - 1));
 }
 template <typename T, typename MPType>
 HOSTDEVICE T compute_pow_grad_dy(T x, T y, T out UNUSED, T dout) {
@@ -1466,8 +1461,7 @@ HOSTDEVICE T compute_pow_grad_dy(T x, T y, T out UNUSED, T dout) {
     return static_cast<T>(0);
   MPType x_val = static_cast<MPType>(x);
   MPType y_val = static_cast<MPType>(y);
-  return static_cast<T>(static_cast<MPType>(dout) * std::log(x_val) *
-                        std::pow(x_val, y_val));
+  return dout * static_cast<T>(std::log(x_val) * std::pow(x_val, y_val));
 }
 #endif
 
@@ -1570,7 +1564,12 @@ struct RemainderGradDx {
 template <typename T, typename Enable = void>
 struct RemainderGradDy {
   HOSTDEVICE T operator()(T x, T y, T out UNUSED, T dout) const {
-    return -dout * (std::floor(static_cast<double>(x / y)));
+    using MPType = typename phi::dtype::MPTypeTrait<T>::Type;
+    auto x_ = static_cast<MPType>(x);
+    auto y_ = static_cast<MPType>(y);
+    auto dout_ = static_cast<MPType>(dout);
+    return static_cast<T>(
+        -dout_ * static_cast<MPType>(std::floor(static_cast<double>(x_ / y_))));
   }
 };
 template <typename T>
@@ -1581,7 +1580,8 @@ struct RemainderGradDy<
     using MPType = typename phi::dtype::MPTypeTrait<T>::Type;
     auto x_ = static_cast<MPType>(x);
     auto y_ = static_cast<MPType>(y);
-    return static_cast<T>(-static_cast<MPType>(dout) * (std::floor((x_ / y_))));
+    auto dout_ = static_cast<MPType>(dout);
+    return static_cast<T>(-dout_ * static_cast<MPType>(std::floor((x_ / y_))));
   }
 };
 template <typename T>
@@ -1597,9 +1597,9 @@ struct RemainderGradDy<
       const auto quot = x / y;
       const auto rem = x % y;
       auto ret = rem ? quot - 1 : quot;
-      return -dout * ret;
+      return static_cast<T>(-dout * static_cast<T>(ret));
     }
-    return -dout * (x / y);
+    return static_cast<T>(-dout * static_cast<T>(x / y));
   }
 };
 /*

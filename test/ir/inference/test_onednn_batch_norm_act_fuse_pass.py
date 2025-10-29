@@ -78,7 +78,7 @@ class TestScaleOneDNNFusePass(PassAutoScanTest):
                 'momentum': momentum,
                 'trainable_statistics': trainable_statistics,
                 'use_global_stats': use_global_stats,
-                'use_mkldnn': use_onednn1,
+                'use_onednn': use_onednn1,
             },
         )
 
@@ -86,7 +86,7 @@ class TestScaleOneDNNFusePass(PassAutoScanTest):
             type='relu',
             inputs={'X': ['norm_output']},
             outputs={'Out': ['relu_output']},
-            attrs={'use_cudnn': use_cudnn, 'use_mkldnn': use_onednn2},
+            attrs={'use_cudnn': use_cudnn, 'use_onednn': use_onednn2},
         )
 
         model_net = [batch_norm_op, relu_op]
@@ -112,7 +112,9 @@ class TestScaleOneDNNFusePass(PassAutoScanTest):
         yield config, ['batch_norm'], (1e-5, 1e-5)
 
     def test(self):
-        self.run_and_statis(quant=False, passes=['batch_norm_act_fuse_pass'])
+        self.run_and_statistics(
+            quant=False, passes=['batch_norm_act_fuse_pass']
+        )
 
 
 if __name__ == '__main__':
