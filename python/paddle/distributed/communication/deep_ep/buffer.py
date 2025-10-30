@@ -370,6 +370,7 @@ class Buffer:
         previous_event: EventOverlap | None = None,
         async_finish: bool = False,
         allocate_on_comm_stream: bool = False,
+        num_experts: int = 0,
     ) -> tuple[
         tuple[paddle.Tensor, paddle.Tensor] | paddle.Tensor,
         paddle.Tensor | None,
@@ -437,6 +438,7 @@ class Buffer:
                 previous_event,
                 async_finish,
                 allocate_on_comm_stream,
+                num_experts,
             )
 
         # Launch the kernel with cached or non-cached mode
@@ -469,6 +471,7 @@ class Buffer:
                     getattr(previous_event, 'event', None),
                     async_finish,
                     allocate_on_comm_stream,
+                    num_experts,
                 )
             )
             return (
@@ -513,6 +516,7 @@ class Buffer:
                 getattr(previous_event, 'event', None),
                 async_finish,
                 allocate_on_comm_stream,
+                num_experts,
             )
             handle = (
                 rank_prefix_matrix,
@@ -623,6 +627,7 @@ class Buffer:
         previous_event: EventOverlap | None = None,
         async_finish: bool = False,
         allocate_on_comm_stream: bool = False,
+        num_experts: int = 0,
     ) -> tuple[
         tuple[paddle.Tensor, paddle.Tensor] | paddle.Tensor,
         paddle.Tensor | None,
@@ -640,7 +645,7 @@ class Buffer:
         # Launch the kernel with cached or non-cached mode
         x, x_scales = x if isinstance(x, tuple) else (x, None)
         if handle is not None:
-            assert topk_idx is None and topk_weights is None
+            assert num_experts > 0
             (
                 is_token_in_rank,
                 rdma_channel_prefix_matrix,
@@ -655,7 +660,15 @@ class Buffer:
             ) = handle
             num_recv_tokens = recv_src_meta.shape[0]
             num_rdma_recv_tokens = send_nvl_head.shape[0]
-            recv_x, recv_x_scales, _, _, _, _, _, _, _, _, _, _, _, _, event = (
+            (
+                recv_x,
+                recv_x_scales,
+                recv_topk_idx,
+                recv_topk_weights,
+                num_recv_tokens_per_expert_list,
+                _, _, _, _, _, _, _, _, _,
+                event,
+            ) = (
                 self.runtime.internode_dispatch(
                     x,
                     x_scales,
@@ -676,13 +689,14 @@ class Buffer:
                     getattr(previous_event, 'event', None),
                     async_finish,
                     allocate_on_comm_stream,
+                    num_experts,
                 )
             )
             return (
                 (recv_x, recv_x_scales) if x_scales is not None else recv_x,
-                None,
-                None,
-                None,
+                recv_topk_idx,
+                recv_topk_weights,
+                num_recv_tokens_per_expert_list,
                 None,
                 EventOverlap(event),
             )
@@ -692,6 +706,7 @@ class Buffer:
                 and is_token_in_rank is not None
                 and num_tokens_per_expert is not None
             )
+            num_experts = num_tokens_per_expert.shape[0]
             (
                 recv_x,
                 recv_x_scales,
@@ -728,6 +743,7 @@ class Buffer:
                 getattr(previous_event, 'event', None),
                 async_finish,
                 allocate_on_comm_stream,
+                num_experts,
             )
             handle = (
                 is_token_in_rank,

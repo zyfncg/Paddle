@@ -228,7 +228,8 @@ struct Buffer {
       const Config& config,
       std::optional<EventHandle>& previous_event,  // NOLINT
       bool async,
-      bool allocate_on_comm_stream);
+      bool allocate_on_comm_stream,
+      int num_experts);
 
   std::tuple<deep_ep::detail::Tensor,
              std::optional<deep_ep::detail::Tensor>,
@@ -361,7 +362,8 @@ struct Buffer {
       const Config& config,
       std::optional<EventHandle>& previous_event,  // NOLINT
       bool async,
-      bool allocate_on_comm_stream);
+      bool allocate_on_comm_stream,
+      int num_experts);
 
   std::tuple<paddle::Tensor,
              std::optional<paddle::Tensor>,

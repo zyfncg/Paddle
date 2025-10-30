@@ -980,7 +980,9 @@ Buffer::internode_dispatch(
     const Config& config,
     std::optional<EventHandle>& previous_event,  // NOLINT
     bool async,
-    bool allocate_on_comm_stream) {
+    bool allocate_on_comm_stream,
+    int num_experts) {
+  
   // In dispatch, CPU will busy-wait until GPU receive tensor size metadata from
   // other ranks, which can be quite long. If users of DeepEP need to execute
   // other Python code on other threads, such as KV transfer, their code will
@@ -1060,9 +1062,6 @@ Buffer::internode_dispatch(
        hidden = static_cast<int>(x.size(1)),
        hidden_int4 =
            static_cast<int>(x.size(1) * x.element_size() / sizeof(int4));
-  auto num_experts =
-           cached_mode ? 0 : static_cast<int>(num_tokens_per_expert->size(0)),
-       num_local_experts = num_experts / num_ranks;
 
   // Top-k checks
   int num_topk = 0;
@@ -1071,7 +1070,6 @@ Buffer::internode_dispatch(
   EP_HOST_ASSERT(topk_idx.has_value() == topk_weights.has_value());
   if (topk_idx.has_value()) {
     num_topk = static_cast<int>(topk_idx->size(1));
-    EP_HOST_ASSERT(num_experts > 0);
     EP_HOST_ASSERT(topk_idx->dim() == 2 && topk_idx->is_contiguous());
     EP_HOST_ASSERT(topk_weights->dim() == 2 && topk_weights->is_contiguous());
     EP_HOST_ASSERT(num_tokens == topk_idx->size(0) &&
@@ -1080,7 +1078,10 @@ Buffer::internode_dispatch(
     EP_HOST_ASSERT(topk_weights->scalar_type() == deep_ep::detail::kFloat32);
     topk_idx_ptr = topk_idx->data_ptr<int64_t>();
     topk_weights_ptr = topk_weights->data_ptr<float>();
+  } else {
+    num_experts = cached_mode ? 0 : num_experts;
   }
+  int num_local_experts = num_experts / num_ranks;
 
   // FP8 scales checks
   float* x_scales_ptr = nullptr;
@@ -2264,7 +2265,8 @@ Buffer::internode_dispatch_api(
     const Config& config,
     std::optional<EventHandle>& previous_event,  // NOLINT
     bool async,
-    bool allocate_on_comm_stream) {
+    bool allocate_on_comm_stream,
+    int num_experts) {
 #ifdef PADDLE_WITH_NVSHMEM
   const auto& x_ = ConvertPaddleTensorToDetailTensor(x);
   std::optional<deep_ep::detail::Tensor> x_scales_ =
@@ -2315,7 +2317,8 @@ Buffer::internode_dispatch_api(
                                 config,
                                 previous_event,
                                 async,
-                                allocate_on_comm_stream);
+                                allocate_on_comm_stream,
+                                num_experts);
 
   auto recv_x_ = ConvertDetailTensorToPaddleTensor(std::get<0>(res));
   std::optional<paddle::Tensor> recv_x_scales_ =

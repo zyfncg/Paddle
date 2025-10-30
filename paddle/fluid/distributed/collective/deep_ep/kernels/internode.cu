@@ -838,6 +838,8 @@ __global__ void __launch_bounds__(
         }
       EP_DEVICE_ASSERT(num_topk_ranks <= kNumTopkRDMARanks);
 
+      if (0 == num_topk_ranks) continue;
+
       // Copy `x` into symmetric send buffer
       auto st_broadcast = [=](const int key, const int4& value) {
 #pragma unroll
