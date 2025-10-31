@@ -666,7 +666,9 @@ class Buffer:
                 recv_topk_idx,
                 recv_topk_weights,
                 num_recv_tokens_per_expert_list,
-                _, _, _, _, _, _, _, _, _,
+                _, _, _, _, _, _,
+                recv_src_meta,
+                _, _,
                 event,
             ) = (
                 self.runtime.internode_dispatch(
@@ -697,7 +699,7 @@ class Buffer:
                 recv_topk_idx,
                 recv_topk_weights,
                 num_recv_tokens_per_expert_list,
-                None,
+                handle,
                 EventOverlap(event),
             )
         else:

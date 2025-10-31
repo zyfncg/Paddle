@@ -1243,19 +1243,18 @@ Buffer::internode_dispatch(
   auto recv_topk_idx = std::optional<deep_ep::detail::Tensor>(),
        recv_topk_weights = std::optional<deep_ep::detail::Tensor>(),
        recv_x_scales = std::optional<deep_ep::detail::Tensor>();
-  auto recv_src_meta = std::optional<deep_ep::detail::Tensor>();
   auto recv_rdma_channel_prefix_matrix =
       std::optional<deep_ep::detail::Tensor>();
   auto recv_gbl_channel_prefix_matrix =
       std::optional<deep_ep::detail::Tensor>();
   auto send_rdma_head = std::optional<deep_ep::detail::Tensor>();
   auto send_nvl_head = std::optional<deep_ep::detail::Tensor>();
-  if (!cached_mode) {
-    recv_src_meta =
+  auto recv_src_meta =
         ConvertPaddleTensorToDetailTensor(paddle::experimental::empty(
             {num_recv_tokens, internode::get_source_meta_bytes()},
             phi::DataType::INT8,
             phi::GPUPlace(device_id)));
+  if (!cached_mode) {
     recv_rdma_channel_prefix_matrix = ConvertPaddleTensorToDetailTensor(
         paddle::experimental::empty({num_rdma_ranks, num_channels},
                                     phi::DataType::INT32,
@@ -1308,7 +1307,7 @@ Buffer::internode_dispatch(
       recv_x_scales_ptr,
       recv_topk_idx_ptr,
       recv_topk_weights_ptr,
-      cached_mode ? nullptr : recv_src_meta->data_ptr(),
+      recv_src_meta.data_ptr(),
       x.data_ptr(),
       x_scales_ptr,
       topk_idx_ptr,
@@ -1350,7 +1349,8 @@ Buffer::internode_dispatch(
                     rdma_channel_prefix_matrix,
                     recv_rdma_rank_prefix_sum,
                     gbl_channel_prefix_matrix,
-                    recv_gbl_rank_prefix_sum}) {
+                    recv_gbl_rank_prefix_sum,
+                    recv_src_meta}) {
       t.record_stream(comm_stream);
       if (allocate_on_comm_stream) t.record_stream(compute_stream);
     }
@@ -1370,8 +1370,7 @@ Buffer::internode_dispatch(
                      recv_rdma_channel_prefix_matrix,
                      recv_gbl_channel_prefix_matrix,
                      send_rdma_head,
-                     send_nvl_head,
-                     recv_src_meta}) {
+                     send_nvl_head}) {
       to.has_value() ? to->record_stream(comm_stream) : void();
       if (allocate_on_comm_stream)
         to.has_value() ? to->record_stream(compute_stream) : void();

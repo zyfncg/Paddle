@@ -39,7 +39,10 @@ namespace internode {
 extern nvshmem_team_t cpu_rdma_team;
 
 struct SourceMeta {
-  int src_rdma_rank, is_token_in_nvl_rank_bits;
+  int src_rdma_rank;
+  int is_token_in_nvl_rank_bits;
+  int src_token_idx;
+  int combine_loop_idx;
 
   EP_STATIC_ASSERT(NUM_MAX_NVL_PEERS == 8,
                    "Invalid number of maximum NVL peers");
@@ -48,12 +51,17 @@ struct SourceMeta {
 
   // TODO(Xreki): faster encoding
   __device__ __forceinline__ SourceMeta(int rdma_rank,
-                                        const bool* is_token_in_nvl_ranks) {
+                                        const bool* is_token_in_nvl_ranks,
+                                        const int token_idx=-1,
+                                        const int dst_combine_loop_idx=-1) {
     src_rdma_rank = rdma_rank;
     is_token_in_nvl_rank_bits = is_token_in_nvl_ranks[0];
 #pragma unroll
     for (int i = 1; i < NUM_MAX_NVL_PEERS; ++i)
       is_token_in_nvl_rank_bits |= is_token_in_nvl_ranks[i] << i;
+
+    src_token_idx = token_idx;
+    combine_loop_idx = dst_combine_loop_idx;
   }
 
   __device__ __forceinline__ bool is_token_in_nvl_rank(int nvl_rank) const {
@@ -831,7 +839,7 @@ __global__ void __launch_bounds__(
           auto recv_is_token_in_rank_values =
               reinterpret_cast<const bool*>(&recv_is_token_in_rank_uint64);
           if (lane_id == num_topk_ranks)
-            src_meta = SourceMeta(rdma_rank, recv_is_token_in_rank_values);
+            src_meta = SourceMeta(rdma_rank, recv_is_token_in_rank_values, token_idx, -1);
           dst_send_buffers[num_topk_ranks++] =
               reinterpret_cast<uint8_t*>(broadcast(send_buffer, i)) +
               slot_idx * num_bytes_per_rdma_token;
@@ -1378,7 +1386,7 @@ __global__ void __launch_bounds__(
             st_na_global);
 
         // Copy source meta
-        if (lane_id == 0 && !kCachedMode)
+        if (lane_id == 0)
           st_na_global(recv_src_meta + recv_token_idx, meta);
 
         // Copy scales
