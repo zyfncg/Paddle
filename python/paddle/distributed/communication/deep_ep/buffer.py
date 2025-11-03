@@ -694,6 +694,18 @@ class Buffer:
                     num_experts,
                 )
             )
+            handle = (
+                is_token_in_rank,
+                rdma_channel_prefix_matrix,
+                gbl_channel_prefix_matrix,
+                recv_rdma_channel_prefix_matrix,
+                recv_rdma_rank_prefix_sum,
+                recv_gbl_channel_prefix_matrix,
+                recv_gbl_rank_prefix_sum,
+                recv_src_meta,
+                send_rdma_head,
+                send_nvl_head,
+            ) 
             return (
                 (recv_x, recv_x_scales) if x_scales is not None else recv_x,
                 recv_topk_idx,
@@ -767,6 +779,78 @@ class Buffer:
                 handle,
                 EventOverlap(event),
             )
+
+    def internode_notify_dispatch(
+        self,
+        x: paddle.Tensor | tuple[paddle.Tensor, paddle.Tensor],
+        topk_idx: paddle.Tensor | None = None,
+        num_tokens_per_rank: paddle.Tensor | None = None,
+        num_tokens_per_rdma_rank: paddle.Tensor | None = None,
+        num_tokens_per_expert: paddle.Tensor | None = None,
+        is_token_in_rank: paddle.Tensor | None = None,
+        expert_alignment: int = 1,
+        config: Config | None = None,
+    ) -> tuple[
+        list[int],
+        int,
+        int,
+        paddle.Tensor,
+        paddle.Tensor,
+        paddle.Tensor,
+        paddle.Tensor,
+        tuple,
+    ]:
+        # Default config
+        config = (
+            self.get_dispatch_config(self.group_size)
+            if config is None
+            else config
+        )
+        # Launch the kernel with cached or non-cached mode
+        x, x_scales = x if isinstance(x, tuple) else (x, None)
+        assert (
+            num_tokens_per_rank is not None
+            and is_token_in_rank is not None
+            and num_tokens_per_expert is not None
+        )
+
+        (
+            num_recv_tokens_per_expert_list,
+            num_recv_tokens,
+            num_rdma_recv_tokens,
+            rdma_channel_prefix_matrix,
+            gbl_channel_prefix_matrix,
+            recv_rdma_rank_prefix_sum,
+            recv_gbl_rank_prefix_sum,
+        ) = self.runtime.internode_notify_dispatch(
+            x,
+            x_scales,
+            topk_idx,
+            num_tokens_per_rank,
+            num_tokens_per_rdma_rank,
+            num_tokens_per_expert,
+            is_token_in_rank,
+            expert_alignment,
+            config,
+        )
+        handle = (
+            is_token_in_rank,
+            rdma_channel_prefix_matrix,
+            gbl_channel_prefix_matrix,
+            None,
+            recv_rdma_rank_prefix_sum,
+            None,
+            recv_gbl_rank_prefix_sum,
+            paddle.empty([num_recv_tokens]),
+            None,
+            paddle.empty([num_rdma_recv_tokens]),
+        )
+        return (
+            num_recv_tokens_per_expert_list,
+            num_recv_tokens,
+            num_rdma_recv_tokens,
+            handle,
+        )
 
     # noinspection PyTypeChecker
     def internode_combine(
