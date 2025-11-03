@@ -1245,8 +1245,6 @@ Buffer::internode_dispatch(
        recv_x_scales = std::optional<deep_ep::detail::Tensor>();
   auto recv_rdma_channel_prefix_matrix =
       std::optional<deep_ep::detail::Tensor>();
-  auto recv_gbl_channel_prefix_matrix =
-      std::optional<deep_ep::detail::Tensor>();
   auto send_rdma_head = std::optional<deep_ep::detail::Tensor>();
   auto send_nvl_head = std::optional<deep_ep::detail::Tensor>();
   auto recv_src_meta =
@@ -1254,13 +1252,13 @@ Buffer::internode_dispatch(
             {num_recv_tokens, internode::get_source_meta_bytes()},
             phi::DataType::INT8,
             phi::GPUPlace(device_id)));
+  auto recv_gbl_channel_prefix_matrix = ConvertPaddleTensorToDetailTensor(
+        paddle::experimental::empty({num_ranks, num_channels},
+                                    phi::DataType::INT32,
+                                    phi::GPUPlace(device_id)));
   if (!cached_mode) {
     recv_rdma_channel_prefix_matrix = ConvertPaddleTensorToDetailTensor(
         paddle::experimental::empty({num_rdma_ranks, num_channels},
-                                    phi::DataType::INT32,
-                                    phi::GPUPlace(device_id)));
-    recv_gbl_channel_prefix_matrix = ConvertPaddleTensorToDetailTensor(
-        paddle::experimental::empty({num_ranks, num_channels},
                                     phi::DataType::INT32,
                                     phi::GPUPlace(device_id)));
     send_rdma_head = ConvertPaddleTensorToDetailTensor(
@@ -1315,7 +1313,7 @@ Buffer::internode_dispatch(
       cached_mode ? nullptr : send_rdma_head->data_ptr<int>(),
       cached_mode ? nullptr : send_nvl_head->data_ptr<int>(),
       cached_mode ? nullptr : recv_rdma_channel_prefix_matrix->data_ptr<int>(),
-      cached_mode ? nullptr : recv_gbl_channel_prefix_matrix->data_ptr<int>(),
+      recv_gbl_channel_prefix_matrix.data_ptr<int>(),
       rdma_channel_prefix_matrix.data_ptr<int>(),
       recv_rdma_rank_prefix_sum.data_ptr<int>(),
       gbl_channel_prefix_matrix.data_ptr<int>(),
@@ -1350,7 +1348,8 @@ Buffer::internode_dispatch(
                     recv_rdma_rank_prefix_sum,
                     gbl_channel_prefix_matrix,
                     recv_gbl_rank_prefix_sum,
-                    recv_src_meta}) {
+                    recv_src_meta,
+                    recv_gbl_channel_prefix_matrix}) {
       t.record_stream(comm_stream);
       if (allocate_on_comm_stream) t.record_stream(compute_stream);
     }
@@ -1368,7 +1367,6 @@ Buffer::internode_dispatch(
                      recv_topk_weights,
                      recv_x_scales,
                      recv_rdma_channel_prefix_matrix,
-                     recv_gbl_channel_prefix_matrix,
                      send_rdma_head,
                      send_nvl_head}) {
       to.has_value() ? to->record_stream(comm_stream) : void();
@@ -2329,6 +2327,9 @@ Buffer::internode_notify_dispatch(
       ConvertPaddleTensorToDetailTensor(paddle::experimental::empty(
           {num_ranks}, phi::DataType::INT32, phi::GPUPlace(device_id)));
 
+  auto compute_stream = calc_ctx->stream();
+  stream_wait(comm_stream, compute_stream);
+
   // Send sizes
   *moe_recv_counter = -1, *moe_recv_rdma_counter = -1;
   for (int i = 0; i < num_local_experts; ++i) moe_recv_expert_counter[i] = -1;
@@ -2395,7 +2396,6 @@ Buffer::internode_notify_dispatch(
   num_recv_tokens_per_expert_list = std::vector<int>(
       moe_recv_expert_counter, moe_recv_expert_counter + num_local_experts);
 
-  auto compute_stream = calc_ctx->stream();
   stream_wait(compute_stream, comm_stream);
 
   return {num_recv_tokens_per_expert_list,

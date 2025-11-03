@@ -1327,7 +1327,7 @@ __global__ void __launch_bounds__(
     num_tokens_to_recv = warp_reduce_sum(end_offset - start_offset);
 
     // Save for combine usage
-    if (lane_id < kNumRDMARanks && !kCachedMode)
+    if (lane_id < kNumRDMARanks)
       recv_gbl_channel_prefix_matrix[(lane_id * NUM_MAX_NVL_PEERS +
                                       src_nvl_rank) *
                                          num_channels +
