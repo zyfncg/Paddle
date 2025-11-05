@@ -224,6 +224,20 @@ struct Buffer {
           cached_gbl_channel_prefix_matrix,
       const std::optional<deep_ep::detail::Tensor>&
           cached_recv_gbl_rank_prefix_sum,
+      const std::optional<deep_ep::detail::Tensor>&
+        asymm_send_combine_schedule_map,
+      const std::optional<deep_ep::detail::Tensor>&
+        asymm_recv_rdma_counter_loop_prefix_sum,
+      const std::optional<deep_ep::detail::Tensor>&
+        asymm_recv_rdma_rank_prefix_sum,
+      const std::optional<deep_ep::detail::Tensor>&
+        asymm_recv_rdma_channel_prefix_matrix,
+      const std::optional<deep_ep::detail::Tensor>&
+        asymm_send_rdma_head,
+      const std::optional<deep_ep::detail::Tensor>&
+        asymm_send_nvl_head,
+      const std::optional<deep_ep::detail::Tensor>&
+        asymm_aggregated_nvl_head,
       int expert_alignment,
       const Config& config,
       std::optional<EventHandle>& previous_event,  // NOLINT
@@ -236,8 +250,6 @@ struct Buffer {
              std::optional<EventHandle>>
   internode_combine(const deep_ep::detail::Tensor& x,
                     const std::optional<deep_ep::detail::Tensor>& topk_weights,
-                    const deep_ep::detail::Tensor& src_meta,
-                    const deep_ep::detail::Tensor& is_combined_token_in_rank,
                     const deep_ep::detail::Tensor& rdma_channel_prefix_matrix,
                     const deep_ep::detail::Tensor& rdma_rank_prefix_sum,
                     const deep_ep::detail::Tensor& gbl_channel_prefix_matrix,
@@ -377,6 +389,20 @@ struct Buffer {
       const std::optional<paddle::Tensor>& cached_recv_rdma_rank_prefix_sum,
       const std::optional<paddle::Tensor>& cached_gbl_channel_prefix_matrix,
       const std::optional<paddle::Tensor>& cached_recv_gbl_rank_prefix_sum,
+      const std::optional<paddle::Tensor>&
+        asymm_send_combine_schedule_map,
+      const std::optional<paddle::Tensor>&
+        asymm_recv_rdma_counter_loop_prefix_sum,
+      const std::optional<paddle::Tensor>&
+        asymm_recv_rdma_rank_prefix_sum,
+      const std::optional<paddle::Tensor>&
+        asymm_recv_rdma_channel_prefix_matrix,
+      const std::optional<paddle::Tensor>&
+        asymm_send_rdma_head,
+      const std::optional<paddle::Tensor>&
+        asymm_send_nvl_head,
+      const std::optional<paddle::Tensor>&
+        asymm_aggregated_nvl_head,
       int expert_alignment,
       const Config& config,
       std::optional<EventHandle>& previous_event,  // NOLINT
@@ -389,8 +415,6 @@ struct Buffer {
              std::optional<EventHandle>>
   internode_combine_api(const paddle::Tensor& x,
                         const std::optional<paddle::Tensor>& topk_weights,
-                        const paddle::Tensor& src_meta,
-                        const paddle::Tensor& is_combined_token_in_rank,
                         const paddle::Tensor& rdma_channel_prefix_matrix,
                         const paddle::Tensor& rdma_rank_prefix_sum,
                         const paddle::Tensor& gbl_channel_prefix_matrix,

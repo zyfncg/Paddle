@@ -976,6 +976,20 @@ Buffer::internode_dispatch(
         cached_gbl_channel_prefix_matrix,
     const std::optional<deep_ep::detail::Tensor>&
         cached_recv_gbl_rank_prefix_sum,
+    const std::optional<deep_ep::detail::Tensor>&
+        asymm_send_combine_schedule_map,
+      const std::optional<deep_ep::detail::Tensor>&
+        asymm_recv_rdma_counter_loop_prefix_sum,
+    const std::optional<deep_ep::detail::Tensor>&
+        asymm_recv_rdma_rank_prefix_sum,
+      const std::optional<deep_ep::detail::Tensor>&
+        asymm_recv_rdma_channel_prefix_matrix,
+      const std::optional<deep_ep::detail::Tensor>&
+        asymm_send_rdma_head,
+      const std::optional<deep_ep::detail::Tensor>&
+        asymm_send_nvl_head,
+      const std::optional<deep_ep::detail::Tensor>&
+        asymm_aggregated_nvl_head,
     int expert_alignment,
     const Config& config,
     std::optional<EventHandle>& previous_event,  // NOLINT
@@ -1249,7 +1263,7 @@ Buffer::internode_dispatch(
   auto send_nvl_head = std::optional<deep_ep::detail::Tensor>();
   auto recv_src_meta =
         ConvertPaddleTensorToDetailTensor(paddle::experimental::empty(
-            {num_recv_tokens, internode::get_source_meta_bytes()},
+            {num_recv_tokens, internode::get_details_source_meta_bytes()},
             phi::DataType::INT8,
             phi::GPUPlace(device_id)));
   auto recv_gbl_channel_prefix_matrix = ConvertPaddleTensorToDetailTensor(
@@ -1298,6 +1312,16 @@ Buffer::internode_dispatch(
     recv_x_scales_ptr = recv_x_scales->data_ptr<float>();
   }
 
+  bool asymmetric_mode = asymm_send_combine_schedule_map.has_value();
+  if (asymmetric_mode) {
+    EP_HOST_ASSERT(cached_mode);
+    EP_HOST_ASSERT(asymm_recv_rdma_counter_loop_prefix_sum.has_value());
+    EP_HOST_ASSERT(asymm_recv_rdma_rank_prefix_sum.has_value());
+    EP_HOST_ASSERT(asymm_recv_rdma_channel_prefix_matrix.has_value());
+    EP_HOST_ASSERT(asymm_send_rdma_head.has_value());
+    EP_HOST_ASSERT(asymm_send_nvl_head.has_value());
+    EP_HOST_ASSERT(asymm_aggregated_nvl_head.has_value());
+  }
   // Launch data dispatch
   // NOTES: the buffer size checks are moved into the `.cu` file
   internode::dispatch(
@@ -1335,7 +1359,15 @@ Buffer::internode_dispatch(
       cached_mode,
       comm_stream,
       num_channels,
-      low_latency_mode);
+      low_latency_mode,
+      asymmetric_mode,
+      asymmetric_mode ? asymm_send_combine_schedule_map->data_ptr<int>() : nullptr,
+      asymmetric_mode ? asymm_recv_rdma_counter_loop_prefix_sum->data_ptr<int>() : nullptr,
+      asymmetric_mode ? asymm_recv_rdma_rank_prefix_sum->data_ptr<int>() : nullptr,
+      asymmetric_mode ? asymm_recv_rdma_channel_prefix_matrix->data_ptr<int>() : nullptr,
+      asymmetric_mode ? asymm_send_rdma_head->data_ptr<int>() : nullptr,
+      asymmetric_mode ? asymm_send_nvl_head->data_ptr<int>() : nullptr,
+      asymmetric_mode ? asymm_aggregated_nvl_head->data_ptr<int>() : nullptr);
 
   // Wait streams
   std::optional<EventHandle> event;
@@ -1406,8 +1438,6 @@ std::tuple<deep_ep::detail::Tensor,
 Buffer::internode_combine(
     const deep_ep::detail::Tensor& x,
     const std::optional<deep_ep::detail::Tensor>& topk_weights,
-    const deep_ep::detail::Tensor& src_meta,
-    const deep_ep::detail::Tensor& is_combined_token_in_rank,
     const deep_ep::detail::Tensor& rdma_channel_prefix_matrix,
     const deep_ep::detail::Tensor& rdma_rank_prefix_sum,
     const deep_ep::detail::Tensor& gbl_channel_prefix_matrix,
@@ -1422,12 +1452,6 @@ Buffer::internode_combine(
 
   // Shape and contiguous checks
   EP_HOST_ASSERT(x.dim() == 2 && x.is_contiguous());
-  EP_HOST_ASSERT(src_meta.dim() == 2 && src_meta.is_contiguous() &&
-                 src_meta.scalar_type() == deep_ep::detail::kByte);
-  EP_HOST_ASSERT(is_combined_token_in_rank.dim() == 2 &&
-                 is_combined_token_in_rank.is_contiguous() &&
-                 is_combined_token_in_rank.scalar_type() ==
-                     deep_ep::detail::kBool);
   EP_HOST_ASSERT(rdma_channel_prefix_matrix.dim() == 2 &&
                  rdma_channel_prefix_matrix.is_contiguous() &&
                  rdma_channel_prefix_matrix.scalar_type() ==
@@ -1451,10 +1475,8 @@ Buffer::internode_combine(
        hidden_int4 =
            static_cast<int>(x.size(1) * x.element_size() / sizeof(int4));
   auto num_combined_tokens =
-      static_cast<int>(is_combined_token_in_rank.size(0));
+      static_cast<int>(combined_rdma_head.size(0));
   EP_HOST_ASSERT((hidden * x.element_size()) % sizeof(int4) == 0);
-  EP_HOST_ASSERT(src_meta.size(1) == internode::get_source_meta_bytes());
-  EP_HOST_ASSERT(is_combined_token_in_rank.size(1) == num_ranks);
   EP_HOST_ASSERT(rdma_channel_prefix_matrix.size(0) == num_rdma_ranks &&
                  rdma_channel_prefix_matrix.size(1) == num_channels);
   EP_HOST_ASSERT(rdma_rank_prefix_sum.size(0) == num_rdma_ranks);
@@ -1538,12 +1560,10 @@ Buffer::internode_combine(
   internode::combine(deep_ep::detail::ScalarTypeToCudaDataType(x.scalar_type()),
                      combined_x.data_ptr(),
                      combined_topk_weights_ptr,
-                     is_combined_token_in_rank.data_ptr<bool>(),
                      x.data_ptr(),
                      topk_weights_ptr,
                      combined_rdma_head.data_ptr<int>(),
                      combined_nvl_head.data_ptr<int>(),
-                     src_meta.data_ptr(),
                      rdma_channel_prefix_matrix.data_ptr<int>(),
                      rdma_rank_prefix_sum.data_ptr<int>(),
                      gbl_channel_prefix_matrix.data_ptr<int>(),
@@ -1568,8 +1588,6 @@ Buffer::internode_combine(
   if (async) {
     event = EventHandle(comm_stream);
     for (auto& t : {x,
-                    src_meta,
-                    is_combined_token_in_rank,
                     rdma_channel_prefix_matrix,
                     rdma_rank_prefix_sum,
                     gbl_channel_prefix_matrix,
@@ -2439,6 +2457,20 @@ Buffer::internode_dispatch_api(
     const std::optional<paddle::Tensor>& cached_recv_rdma_rank_prefix_sum,
     const std::optional<paddle::Tensor>& cached_gbl_channel_prefix_matrix,
     const std::optional<paddle::Tensor>& cached_recv_gbl_rank_prefix_sum,
+    const std::optional<paddle::Tensor>&
+        asymm_send_combine_schedule_map,
+      const std::optional<paddle::Tensor>&
+        asymm_recv_rdma_counter_loop_prefix_sum,
+    const std::optional<paddle::Tensor>&
+        asymm_recv_rdma_rank_prefix_sum,
+      const std::optional<paddle::Tensor>&
+        asymm_recv_rdma_channel_prefix_matrix,
+      const std::optional<paddle::Tensor>&
+        asymm_send_rdma_head,
+      const std::optional<paddle::Tensor>&
+        asymm_send_nvl_head,
+      const std::optional<paddle::Tensor>&
+        asymm_aggregated_nvl_head,
     int expert_alignment,
     const Config& config,
     std::optional<EventHandle>& previous_event,  // NOLINT
@@ -2476,6 +2508,27 @@ Buffer::internode_dispatch_api(
   std::optional<deep_ep::detail::Tensor> cached_recv_gbl_rank_prefix_sum_ =
       ConvertOptionalPaddleTensorToDetailTensor(
           cached_recv_gbl_rank_prefix_sum);
+  std::optional<deep_ep::detail::Tensor> asymm_send_combine_schedule_map_ =
+      ConvertOptionalPaddleTensorToDetailTensor(
+          asymm_send_combine_schedule_map);
+  std::optional<deep_ep::detail::Tensor> asymm_recv_rdma_counter_loop_prefix_sum_ =
+      ConvertOptionalPaddleTensorToDetailTensor(
+          asymm_recv_rdma_counter_loop_prefix_sum);
+  std::optional<deep_ep::detail::Tensor> asymm_recv_rdma_rank_prefix_sum_ =
+      ConvertOptionalPaddleTensorToDetailTensor(
+          asymm_recv_rdma_rank_prefix_sum);
+  std::optional<deep_ep::detail::Tensor> asymm_recv_rdma_channel_prefix_matrix_ =
+      ConvertOptionalPaddleTensorToDetailTensor(
+          asymm_recv_rdma_channel_prefix_matrix);
+  std::optional<deep_ep::detail::Tensor> asymm_send_rdma_head_ =
+      ConvertOptionalPaddleTensorToDetailTensor(
+          asymm_send_rdma_head);
+  std::optional<deep_ep::detail::Tensor> asymm_send_nvl_head_ =
+      ConvertOptionalPaddleTensorToDetailTensor(
+          asymm_send_nvl_head);
+  std::optional<deep_ep::detail::Tensor> asymm_aggregated_nvl_head_ =
+      ConvertOptionalPaddleTensorToDetailTensor(
+          asymm_aggregated_nvl_head);
 
   auto res = internode_dispatch(x_,
                                 x_scales_,
@@ -2491,6 +2544,13 @@ Buffer::internode_dispatch_api(
                                 cached_recv_rdma_rank_prefix_sum_,
                                 cached_gbl_channel_prefix_matrix_,
                                 cached_recv_gbl_rank_prefix_sum_,
+                                asymm_send_combine_schedule_map_,
+                                asymm_recv_rdma_counter_loop_prefix_sum_,
+                                asymm_recv_rdma_rank_prefix_sum_,
+                                asymm_recv_rdma_channel_prefix_matrix_,
+                                asymm_send_rdma_head_,
+                                asymm_send_nvl_head_,
+                                asymm_aggregated_nvl_head_,
                                 expert_alignment,
                                 config,
                                 previous_event,
@@ -2563,8 +2623,6 @@ std::tuple<paddle::Tensor,
 Buffer::internode_combine_api(
     const paddle::Tensor& x,
     const std::optional<paddle::Tensor>& topk_weights,
-    const paddle::Tensor& src_meta,
-    const paddle::Tensor& is_combined_token_in_rank,
     const paddle::Tensor& rdma_channel_prefix_matrix,
     const paddle::Tensor& rdma_rank_prefix_sum,
     const paddle::Tensor& gbl_channel_prefix_matrix,
@@ -2580,10 +2638,6 @@ Buffer::internode_combine_api(
   std::optional<deep_ep::detail::Tensor> topk_weights_ =
       ConvertOptionalPaddleTensorToDetailTensor(topk_weights);
 
-  const auto& src_meta_ = ConvertPaddleTensorToDetailTensor(src_meta);
-  const auto& is_combined_token_in_rank_ =
-      ConvertPaddleTensorToDetailTensor(is_combined_token_in_rank);
-
   const auto& rdma_channel_prefix_matrix_ =
       ConvertPaddleTensorToDetailTensor(rdma_channel_prefix_matrix);
   const auto& rdma_rank_prefix_sum_ =
@@ -2598,8 +2652,6 @@ Buffer::internode_combine_api(
 
   auto res = internode_combine(x_,
                                topk_weights_,
-                               src_meta_,
-                               is_combined_token_in_rank_,
                                rdma_channel_prefix_matrix_,
                                rdma_rank_prefix_sum_,
                                gbl_channel_prefix_matrix_,

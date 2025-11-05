@@ -66,6 +66,18 @@ struct VecInt<16> {
   using vec_t = int4;
 };
 
+struct int16 {
+  int4 val0;
+  int4 val1;
+  int4 val2;
+  int4 val3;
+};
+
+template <>
+struct VecInt<64> {
+  using vec_t = int16;
+};
+
 __device__ __forceinline__ void trap() { asm("trap;"); }
 
 __device__ __forceinline__ void memory_fence() {
@@ -284,6 +296,16 @@ __device__ __forceinline__ int4 ld_nc_global(const int4 *ptr) {
   return ret;
 }
 
+template <>
+__device__ __forceinline__ int16 ld_nc_global(const int16 *ptr) {
+  int16 ret;
+  ret.val0 = ld_nc_global(&(ptr->val0));
+  ret.val1 = ld_nc_global(&(ptr->val1));
+  ret.val2 = ld_nc_global(&(ptr->val2));
+  ret.val3 = ld_nc_global(&(ptr->val3));
+  return ret;
+}
+
 __device__ __forceinline__ void st_na_relaxed(const uint8_t *ptr, uint8_t val) {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
   asm volatile("st.relaxed.gpu.global.L1::no_allocate.b8 [%0], %1;"
@@ -394,6 +416,15 @@ __device__ __forceinline__ void st_na_global(const int4 *ptr,
                "r"(value.y),
                "r"(value.z),
                "r"(value.w));
+}
+
+template <>
+__device__ __forceinline__ void st_na_global(const int16 *ptr,
+                                             const int16 &value) {
+  st_na_global(&(ptr->val0), value.val0);
+  st_na_global(&(ptr->val1), value.val1);
+  st_na_global(&(ptr->val2), value.val2);
+  st_na_global(&(ptr->val3), value.val3);
 }
 
 template <typename dtype_t>

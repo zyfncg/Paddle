@@ -163,6 +163,7 @@ void combine(cudaDataType_t type,
 namespace internode {
 
 int get_source_meta_bytes();
+int get_details_source_meta_bytes();
 
 void notify_dispatch(const int* num_tokens_per_rank,
                      int* moe_recv_counter_mapped,
@@ -229,7 +230,15 @@ void dispatch(void* recv_x,
               bool is_cached_dispatch,
               cudaStream_t stream,
               int num_channels,
-              bool low_latency_mode);
+              bool low_latency_mode,
+              bool is_asymmetric_mode,
+              const int* asymm_send_combine_schedule_map,
+              const int* asymm_recv_rdma_counter_loop_prefix_sum,
+              const int* asymm_recv_rdma_rank_prefix_sum,
+              const int* asymm_recv_rdma_channel_prefix_matrix,
+              const int* asymm_send_rdma_head,
+              const int* asymm_send_nvl_head,
+              int* asymm_aggregated_nvl_head);
 
 void cached_notify(int hidden_int4,
                    int num_scales,
@@ -258,12 +267,10 @@ void cached_notify(int hidden_int4,
 void combine(cudaDataType_t type,
              void* combined_x,
              float* combined_topk_weights,
-             const bool* is_combined_token_in_rank,
              const void* x,
              const float* topk_weights,
              const int* combined_rdma_head,
              const int* combined_nvl_head,
-             const void* src_meta,
              const int* rdma_channel_prefix_matrix,
              const int* rdma_rank_prefix_sum,
              const int* gbl_channel_prefix_matrix,

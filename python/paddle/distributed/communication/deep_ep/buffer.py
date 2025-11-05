@@ -371,6 +371,7 @@ class Buffer:
         async_finish: bool = False,
         allocate_on_comm_stream: bool = False,
         num_experts: int = 0,
+        asymmetric_handle: tuple | None = None,
     ) -> tuple[
         tuple[paddle.Tensor, paddle.Tensor] | paddle.Tensor,
         paddle.Tensor | None,
@@ -422,6 +423,9 @@ class Buffer:
             else config
         )
 
+        if asymmetric_handle is not None:
+            assert self.runtime.get_num_rdma_ranks() > 1
+
         # Internode
         if self.runtime.get_num_rdma_ranks() > 1:
             return self.internode_dispatch(
@@ -439,6 +443,7 @@ class Buffer:
                 async_finish,
                 allocate_on_comm_stream,
                 num_experts,
+                asymmetric_handle=asymmetric_handle,
             )
 
         # Launch the kernel with cached or non-cached mode
@@ -628,6 +633,7 @@ class Buffer:
         async_finish: bool = False,
         allocate_on_comm_stream: bool = False,
         num_experts: int = 0,
+        asymmetric_handle = None
     ) -> tuple[
         tuple[paddle.Tensor, paddle.Tensor] | paddle.Tensor,
         paddle.Tensor | None,
@@ -646,6 +652,26 @@ class Buffer:
         x, x_scales = x if isinstance(x, tuple) else (x, None)
         if handle is not None:
             assert num_experts > 0
+            
+            if asymmetric_handle is not None:
+                (
+                    asymm_send_combine_schedule_map,
+                    asymm_recv_rdma_counter_loop_prefix_sum,
+                    asymm_recv_rdma_rank_prefix_sum,
+                    asymm_recv_rdma_channel_prefix_matrix,
+                    asymm_send_rdma_head,
+                    asymm_send_nvl_head,
+                    asymm_aggregated_nvl_head,
+                ) = asymmetric_handle
+            else:
+                asymm_send_combine_schedule_map = None
+                asymm_recv_rdma_counter_loop_prefix_sum = None
+                asymm_recv_rdma_rank_prefix_sum = None
+                asymm_recv_rdma_channel_prefix_matrix = None
+                asymm_send_rdma_head = None
+                asymm_send_nvl_head = None
+                asymm_aggregated_nvl_head = None
+
             (
                 is_token_in_rank,
                 rdma_channel_prefix_matrix,
@@ -686,6 +712,13 @@ class Buffer:
                     recv_rdma_rank_prefix_sum,
                     gbl_channel_prefix_matrix,
                     recv_gbl_rank_prefix_sum,
+                    asymm_send_combine_schedule_map,
+                    asymm_recv_rdma_counter_loop_prefix_sum,
+                    asymm_recv_rdma_rank_prefix_sum,
+                    asymm_recv_rdma_channel_prefix_matrix,
+                    asymm_send_rdma_head,
+                    asymm_send_nvl_head,
+                    asymm_aggregated_nvl_head,
                     expert_alignment,
                     config,
                     getattr(previous_event, 'event', None),
@@ -748,6 +781,13 @@ class Buffer:
                 num_tokens_per_expert,
                 0,
                 0,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -871,14 +911,14 @@ class Buffer:
 
         # Unpack handle
         (
-            is_combined_token_in_rank,
+            _,
             _,
             _,
             rdma_channel_prefix_matrix,
             rdma_rank_prefix_sum,
             gbl_channel_prefix_matrix,
             gbl_rank_prefix_sum,
-            src_meta,
+            _,
             send_rdma_head,
             send_nvl_head,
         ) = handle
@@ -888,8 +928,6 @@ class Buffer:
             self.runtime.internode_combine(
                 x,
                 topk_weights,
-                src_meta,
-                is_combined_token_in_rank,
                 rdma_channel_prefix_matrix,
                 rdma_rank_prefix_sum,
                 gbl_channel_prefix_matrix,
