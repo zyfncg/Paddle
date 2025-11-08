@@ -1323,3 +1323,26 @@ class Buffer:
             EventOverlap(event, tensors_to_record if async_finish else None),
             hook,
         )
+    
+    def clear_buffer(
+        self,
+        x,
+        x_scales,
+        topk_idx,
+        is_start = False,
+        is_end = False,
+        config = None
+    ):
+        config = (
+            self.get_dispatch_config(self.group_size)
+            if config is None
+            else config
+        )
+        self.runtime.clear_buffer(
+            x,
+            x_scales,
+            topk_idx,
+            is_start,
+            is_end,
+            config,
+        )

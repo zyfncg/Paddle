@@ -942,6 +942,55 @@ Buffer::intranode_combine(
 }
 
 #ifdef PADDLE_WITH_NVSHMEM
+void Buffer::clear_buffer(
+    const deep_ep::detail::Tensor& x,
+    const std::optional<deep_ep::detail::Tensor>& x_scales,
+    const std::optional<deep_ep::detail::Tensor>& topk_idx,
+    const bool is_start,
+    const bool is_end,
+    const Config& config) {
+
+    int hidden_int4 = static_cast<int>(x.size(1) * x.element_size() / sizeof(int4));
+    int num_scales = 0;
+    if (x_scales.has_value()) {
+      EP_HOST_ASSERT(x.element_size() == 1);
+      EP_HOST_ASSERT(x_scales->scalar_type() == deep_ep::detail::kFloat32);
+      EP_HOST_ASSERT(x_scales->dim() > 0 && x_scales->dim() < 3 &&
+                    x_scales->is_contiguous());
+      num_scales = x_scales->dim() == 1 ? 1 : static_cast<int>(x_scales->size(1));
+    }
+
+    int num_topk = 0;
+    if (topk_idx.has_value()) {
+      num_topk = static_cast<int>(topk_idx->size(1));
+    }
+
+    const int num_channels = config.num_sms / 2;
+
+    // Just a barrier and clean flags
+    internode::clear_buffer(
+        hidden_int4,
+        num_scales,
+        num_topk,
+        num_topk,
+        num_ranks,
+        num_channels,
+        rdma_buffer_ptr,
+        config.num_max_rdma_chunked_recv_tokens,
+        buffer_ptrs_gpu,
+        config.num_max_nvl_chunked_recv_tokens,
+        task_fifo_ptrs_gpu,
+        head,
+        rank,
+        is_start,
+        is_end,
+        comm_stream,
+        config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
+        num_nvl_bytes);
+    move_fifo_slots(2);
+}
+
+
 std::tuple<deep_ep::detail::Tensor,
            std::optional<deep_ep::detail::Tensor>,
            std::optional<deep_ep::detail::Tensor>,
@@ -3135,6 +3184,32 @@ Buffer::intranode_combine_api(const paddle::Tensor& x,
   return {recv_x_, recv_topk_weights_, event_};
 }
 
+void
+Buffer::clear_buffer_api(
+    const paddle::Tensor& x,
+    const std::optional<paddle::Tensor>& x_scales,
+    const std::optional<paddle::Tensor>& topk_idx,
+    const bool is_start,
+    const bool is_end,
+    const Config& config) {
+#ifdef PADDLE_WITH_NVSHMEM
+  const auto& x_ = ConvertPaddleTensorToDetailTensor(x);
+  std::optional<deep_ep::detail::Tensor> x_scales_ =
+      ConvertOptionalPaddleTensorToDetailTensor(x_scales);
+  std::optional<deep_ep::detail::Tensor> topk_idx_ =
+      ConvertOptionalPaddleTensorToDetailTensor(topk_idx);
+  clear_buffer(x_,
+                x_scales_,
+                topk_idx_,
+                is_start,
+                is_end,
+                config);
+#else
+  LOG(ERROR) << "NVSHMEM is not enabled. You can enable it by setting cmake "
+                "option WITH_NVSHMEM=ON.";
+  return {};
+#endif
+}
 std::tuple<std::vector<int>,  // num_recv_tokens_per_expert_list
            int,               // num_recv_tokens
            int,               // num_rdma_recv_tokens

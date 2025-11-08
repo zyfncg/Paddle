@@ -190,6 +190,14 @@ struct Buffer {
                     bool allocate_on_comm_stream);
 
 #ifdef PADDLE_WITH_NVSHMEM
+void clear_buffer(
+    const deep_ep::detail::Tensor& x,
+    const std::optional<deep_ep::detail::Tensor>& x_scales,
+    const std::optional<deep_ep::detail::Tensor>& topk_idx,
+    const bool is_start,
+    const bool is_end,
+    const Config& config);
+
   std::tuple<deep_ep::detail::Tensor,
              std::optional<deep_ep::detail::Tensor>,
              std::optional<deep_ep::detail::Tensor>,
@@ -565,6 +573,14 @@ struct Buffer {
       const paddle::Tensor& is_token_in_rank,
       int expert_alignment,
       const Config& config);
+  
+  void clear_buffer_api(
+    const paddle::Tensor& x,
+    const std::optional<paddle::Tensor>& x_scales,
+    const std::optional<paddle::Tensor>& topk_idx,
+    const bool is_start,
+    const bool is_end,
+    const Config& config);
 };
 
 deep_ep::detail::Tensor ConvertPaddleTensorToDetailTensor(
