@@ -66,6 +66,16 @@ struct VecInt<16> {
   using vec_t = int4;
 };
 
+struct int8 {
+  int4 val0;
+  int4 val1;
+};
+
+template <>
+struct VecInt<32> {
+  using vec_t = int8;
+};
+
 struct int16 {
   int4 val0;
   int4 val1;
@@ -297,6 +307,14 @@ __device__ __forceinline__ int4 ld_nc_global(const int4 *ptr) {
 }
 
 template <>
+__device__ __forceinline__ int8 ld_nc_global(const int8 *ptr) {
+  int8 ret;
+  ret.val0 = ld_nc_global(&(ptr->val0));
+  ret.val1 = ld_nc_global(&(ptr->val1));
+  return ret;
+}
+
+template <>
 __device__ __forceinline__ int16 ld_nc_global(const int16 *ptr) {
   int16 ret;
   ret.val0 = ld_nc_global(&(ptr->val0));
@@ -417,6 +435,14 @@ __device__ __forceinline__ void st_na_global(const int4 *ptr,
                "r"(value.z),
                "r"(value.w));
 }
+
+template <>
+__device__ __forceinline__ void st_na_global(const int8 *ptr,
+                                             const int8 &value) {
+  st_na_global(&(ptr->val0), value.val0);
+  st_na_global(&(ptr->val1), value.val1);
+}
+
 
 template <>
 __device__ __forceinline__ void st_na_global(const int16 *ptr,

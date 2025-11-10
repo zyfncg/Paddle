@@ -307,7 +307,8 @@ void combine(cudaDataType_t type,
              int num_ranks,
              cudaStream_t stream,
              int num_channels,
-             bool low_latency_mode);
+             bool low_latency_mode,
+             bool inplace_float_combine);
 
 }  // namespace internode
 

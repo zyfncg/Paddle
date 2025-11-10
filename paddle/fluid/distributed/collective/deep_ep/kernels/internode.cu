@@ -1969,7 +1969,8 @@ __device__ int combine_token(bool is_token_in_rank,
                              float* combined_topk_weights,
                              int num_max_recv_tokens,
                              const ReceiveFn& recv_fn,
-                             const ReceiveTWFn& recv_tw_fn) {
+                             const ReceiveTWFn& recv_tw_fn,
+                             const bool inplace_float_combine = false) {
   constexpr auto kDtypePerInt4 = sizeof(int4) / sizeof(dtype_t);
 
   // Broadcast current heads
@@ -1984,6 +1985,10 @@ __device__ int combine_token(bool is_token_in_rank,
       topk_ranks[num_topk_ranks++] = i;
     }
   EP_DEVICE_ASSERT(num_topk_ranks <= kMaxNumRanks);
+
+  if (inplace_float_combine && num_topk_ranks == 0) {
+    return;
+  }
 
 // Reduce data
 #pragma unroll
@@ -2003,16 +2008,24 @@ __device__ int combine_token(bool is_token_in_rank,
           reinterpret_cast<const dtype_t*>(&recv_value_int4[j]);
 #pragma unroll
       for (int k = 0; k < kDtypePerInt4; ++k)
-        values[k] += static_cast<float>(recv_value_dtypes[k]);
+        values[k] += static_cast<float>(recv_value_dtypes[k]);  // 转成了float进行累加
     }
 
-    // Cast back to `dtype_t` and write
-    int4 out_int4;
-    auto out_dtypes = reinterpret_cast<dtype_t*>(&out_int4);
+    if (!inplace_float_combine) {
+      // Cast back to `dtype_t` and write
+      int4 out_int4;
+      auto out_dtypes = reinterpret_cast<dtype_t*>(&out_int4);
 #pragma unroll
-    for (int j = 0; j < kDtypePerInt4; ++j)
-      out_dtypes[j] = static_cast<dtype_t>(values[j]);
-    st_na_global(combined_row + i, out_int4);
+      for (int j = 0; j < kDtypePerInt4; ++j)
+        out_dtypes[j] = static_cast<dtype_t>(values[j]);
+      st_na_global(combined_row + i, out_int4);
+    } else {
+      int8 out_int8 = ld_nc_global(reinterpret_cast<int8*>(combined_row) + i);
+      auto out_dtypes = reinterpret_cast<float*>(&out_int8);
+      for (int j = 0; j < kDtypePerInt4; ++j)
+        values[j] += out_dtypes[j];
+      st_na_global(reinterpret_cast<int8*>(combined_row) + i, *reinterpret_cast<int8*>(values));
+    }
   }
 
   // Reduce `topk_weights`
@@ -2061,7 +2074,8 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
             int num_max_nvl_chunked_send_tokens,
             int num_max_nvl_chunked_recv_tokens,
             int rank,
-            int num_ranks) {
+            int num_ranks,
+            bool inplace_float_combine) {
   enum class WarpRole {
     kNVLSender,
     kNVLAndRDMAForwarder,
@@ -2635,17 +2649,20 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
                                   hidden_bytes + sizeof(SourceMeta)) +
                               topk_idx);
         };
+        auto out_hidden_int4 = hidden_int4;
+        if (inplace_float_combine) out_hidden_int4 *= sizeof(float) / sizeof(dtype_t);
         combine_token<kNumRDMARanks, dtype_t, kNumTopkRDMARanks>(
             expected_head >= 0,
             expected_head,
             lane_id,
             hidden_int4,
             num_topk,
-            combined_x + token_idx * hidden_int4,
+            combined_x + token_idx * out_hidden_int4,
             combined_topk_weights + token_idx * num_topk,
             num_max_rdma_chunked_recv_tokens,
             recv_fn,
-            recv_tw_fn);
+            recv_tw_fn,
+            inplace_float_combine);
       }
 
       // Retired
@@ -2745,7 +2762,8 @@ void combine(cudaDataType_t type,
              int num_ranks,
              cudaStream_t stream,
              int num_channels,
-             bool low_latency_mode) {
+             bool low_latency_mode,
+             bool inplace_float_combine) {
   constexpr int kNumCombineForwarderWarps = 16;
 
 #define COMBINE_LAUNCH_CASE(num_rdma_ranks)                                    \
@@ -2780,7 +2798,8 @@ void combine(cudaDataType_t type,
                   num_max_nvl_chunked_send_tokens,                             \
                   num_max_nvl_chunked_recv_tokens,                             \
                   rank,                                                        \
-                  num_ranks);                                                  \
+                  num_ranks,                                                   \
+                  inplace_float_combine);                                      \
   }                                                                            \
   break
 

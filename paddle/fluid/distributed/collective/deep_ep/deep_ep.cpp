@@ -1481,7 +1481,7 @@ Buffer::internode_dispatch(
           event};
 }
 
-std::tuple<deep_ep::detail::Tensor,
+std::tuple<std::optional<deep_ep::detail::Tensor>,
            std::optional<deep_ep::detail::Tensor>,
            std::optional<EventHandle>>
 Buffer::internode_combine(
@@ -1492,6 +1492,7 @@ Buffer::internode_combine(
     const deep_ep::detail::Tensor& gbl_channel_prefix_matrix,
     const deep_ep::detail::Tensor& combined_rdma_head,
     const deep_ep::detail::Tensor& combined_nvl_head,
+    const std::optional<deep_ep::detail::Tensor>& combined_x,
     const Config& config,
     std::optional<EventHandle>& previous_event,  // NOLINT
     bool async,
@@ -1603,11 +1604,24 @@ Buffer::internode_combine(
   move_fifo_slots(2);
 
   // Launch data combine
-  auto combined_x =
+  bool inplace_float_combine = false;
+  auto in_combined_x = std::optional<deep_ep::detail::Tensor>();
+  auto res_combined_x = std::optional<deep_ep::detail::Tensor>();
+  if (combined_x.has_value()) {
+    inplace_float_combine = true;
+    in_combined_x = combined_x;
+    EP_HOST_ASSERT(in_combined_x->dim() == 2 &&
+                  in_combined_x->is_contiguous() &&
+                  in_combined_x->scalar_type() == deep_ep::detail::kFloat32 &&
+                  in_combined_x->size(1) == hidden);
+  } else {
+    in_combined_x =
       ConvertPaddleTensorToDetailTensor(paddle::experimental::empty(
           {num_combined_tokens, hidden}, x.dtype(), x.place()));
+    res_combined_x = in_combined_x;
+  }
   internode::combine(deep_ep::detail::ScalarTypeToCudaDataType(x.scalar_type()),
-                     combined_x.data_ptr(),
+                     in_combined_x->data_ptr(),
                      combined_topk_weights_ptr,
                      x.data_ptr(),
                      topk_weights_ptr,
@@ -1630,7 +1644,8 @@ Buffer::internode_combine(
                      num_ranks,
                      comm_stream,
                      num_channels,
-                     low_latency_mode);
+                     low_latency_mode,
+                     inplace_float_combine);
 
   // Wait streams
   std::optional<EventHandle> event;
@@ -1640,13 +1655,12 @@ Buffer::internode_combine(
                     rdma_channel_prefix_matrix,
                     rdma_rank_prefix_sum,
                     gbl_channel_prefix_matrix,
-                    combined_x,
                     combined_rdma_head,
                     combined_nvl_head}) {
       t.record_stream(comm_stream);
       if (allocate_on_comm_stream) t.record_stream(compute_stream);
     }
-    for (auto& to : {topk_weights, combined_topk_weights}) {
+    for (auto& to : {topk_weights, combined_topk_weights, in_combined_x, res_combined_x}) {
       to.has_value() ? to->record_stream(comm_stream) : void();
       if (allocate_on_comm_stream)
         to.has_value() ? to->record_stream(compute_stream) : void();
@@ -1661,7 +1675,7 @@ Buffer::internode_combine(
   }
 
   // Return values
-  return {combined_x, combined_topk_weights, event};
+  return {res_combined_x, combined_topk_weights, event};
 }
 #endif  // PADDLE_WITH_NVSHMEM
 
@@ -2666,7 +2680,7 @@ Buffer::internode_dispatch_api(
 #endif
 }
 
-std::tuple<paddle::Tensor,
+std::tuple<std::optional<paddle::Tensor>,
            std::optional<paddle::Tensor>,
            std::optional<EventHandle>>
 Buffer::internode_combine_api(
@@ -2677,6 +2691,7 @@ Buffer::internode_combine_api(
     const paddle::Tensor& gbl_channel_prefix_matrix,
     const paddle::Tensor& combined_rdma_head,
     const paddle::Tensor& combined_nvl_head,
+    const std::optional<paddle::Tensor>& combined_x,
     const Config& config,
     std::optional<EventHandle>& previous_event,  // NOLINT
     bool async,
@@ -2698,6 +2713,9 @@ Buffer::internode_combine_api(
       ConvertPaddleTensorToDetailTensor(combined_rdma_head);
   const auto& combined_nvl_head_ =
       ConvertPaddleTensorToDetailTensor(combined_nvl_head);
+  
+  std::optional<deep_ep::detail::Tensor> combined_x_ =
+      ConvertOptionalPaddleTensorToDetailTensor(combined_x);
 
   auto res = internode_combine(x_,
                                topk_weights_,
@@ -2706,18 +2724,19 @@ Buffer::internode_combine_api(
                                gbl_channel_prefix_matrix_,
                                combined_rdma_head_,
                                combined_nvl_head_,
+                               combined_x_,
                                config,
                                previous_event,
                                async,
                                allocate_on_comm_stream);
 
-  auto combined_x_ = ConvertDetailTensorToPaddleTensor(std::get<0>(res));
+  auto res_combined_x_ = ConvertOptionalDetailTensorToPaddleTensor(std::get<0>(res));
   std::optional<paddle::Tensor> combined_topk_weights_ =
       ConvertOptionalDetailTensorToPaddleTensor(std::get<1>(res));
 
   const auto& event = std::get<2>(res);
 
-  return {combined_x_, combined_topk_weights_, event};
+  return {res_combined_x_, combined_topk_weights_, event};
 #else
   LOG(ERROR) << "NVSHMEM is not enabled. You can enable it by setting cmake "
                 "option WITH_NVSHMEM=ON.";
