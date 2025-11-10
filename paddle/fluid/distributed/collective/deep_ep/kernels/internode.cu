@@ -79,9 +79,14 @@ struct alignas(64) SourceMeta {
     
     send_rdma_head = rdma_head;
 
+    union {
+      int8 nvl_head_frag;
+      int nvl_head_vec[NUM_MAX_NVL_PEERS];
+    } nvl_head_union;
+    nvl_head_union.nvl_head_frag = *reinterpret_cast<const int8*>(nvl_head);
 #pragma unroll
     for (int i = 0; i < NUM_MAX_NVL_PEERS; ++i)
-      send_nvl_head[i] = nvl_head[i];
+      send_nvl_head[i] = nvl_head_union.nvl_head_vec[i];
 
   }
 
@@ -1230,9 +1235,7 @@ __global__ void __launch_bounds__(
             int asymm_channel_start_idx = channel_id == 0 ? 0 : ld_nc_global(shifted_asymm_recv_rdma_channel_prefix_matrix + src_rdma_rank * num_channels + channel_id - 1);
             int asymm_combine_start_idx = src_meta.combine_loop_idx == 0 ? 0 : asymm_recv_rdma_counter_loop_prefix_sum[src_meta.combine_loop_idx - 1];
             auto asymm_aggregated_nvl_head_offset = asymm_combine_start_idx + asymm_rdma_start_idx + asymm_channel_start_idx + src_meta.send_rdma_head;
-#pragma unroll
-            for (int h = 0; h < NUM_MAX_NVL_PEERS; ++h)
-              asymm_aggregated_nvl_head[asymm_aggregated_nvl_head_offset * NUM_MAX_NVL_PEERS + h] = src_meta.send_nvl_head[h];
+            *reinterpret_cast<int8*>(asymm_aggregated_nvl_head + asymm_aggregated_nvl_head_offset * NUM_MAX_NVL_PEERS) = *reinterpret_cast<int8*>(&(src_meta.send_nvl_head));
           }
         }
         if (!is_in_dst_nvl_rank) continue;
