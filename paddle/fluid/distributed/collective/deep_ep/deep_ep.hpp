@@ -312,6 +312,27 @@ struct Buffer {
       bool async,
       bool allocate_on_comm_stream);
 
+  std::tuple<int,
+             int,
+             deep_ep::detail::Tensor,
+             deep_ep::detail::Tensor,
+             deep_ep::detail::Tensor,
+             deep_ep::detail::Tensor,
+             deep_ep::detail::Tensor>
+  internode_notify_combine(
+      const deep_ep::detail::Tensor& x,
+      const std::optional<deep_ep::detail::Tensor>& x_scales,
+      const std::optional<deep_ep::detail::Tensor>& topk_idx,
+      const std::optional<deep_ep::detail::Tensor>& num_tokens_per_rank,
+      const std::optional<deep_ep::detail::Tensor>& num_tokens_per_rdma_rank,
+      const std::optional<deep_ep::detail::Tensor>& num_tokens_per_expert,
+      const deep_ep::detail::Tensor& is_token_in_rank,
+      int expert_alignment,
+      const Config& config,
+      std::optional<EventHandle>& previous_event,  // NOLINT
+      bool async,
+      bool allocate_on_comm_stream);
+
 #endif  // PADDLE_WITH_NVSHMEM
 
   void clean_low_latency_buffer(int num_max_dispatch_tokens_per_rank,
@@ -520,6 +541,27 @@ struct Buffer {
       const std::optional<paddle::Tensor>& cached_recv_gbl_rank_prefix_sum,
       int cached_num_recv_tokens,
       int cached_num_rdma_recv_tokens,
+      int expert_alignment,
+      const Config& config,
+      std::optional<EventHandle>& previous_event,  // NOLINT
+      bool async,
+      bool allocate_on_comm_stream);
+
+  std::tuple<int,
+             int,
+             paddle::Tensor,
+             paddle::Tensor,
+             paddle::Tensor,
+             paddle::Tensor,
+             paddle::Tensor>
+  internode_notify_combine_api(
+      const paddle::Tensor& x,
+      const std::optional<paddle::Tensor>& x_scales,
+      const std::optional<paddle::Tensor>& topk_idx,
+      const std::optional<paddle::Tensor>& num_tokens_per_rank,
+      const std::optional<paddle::Tensor>& num_tokens_per_rdma_rank,
+      const std::optional<paddle::Tensor>& num_tokens_per_expert,
+      const paddle::Tensor& is_token_in_rank,
       int expert_alignment,
       const Config& config,
       std::optional<EventHandle>& previous_event,  // NOLINT

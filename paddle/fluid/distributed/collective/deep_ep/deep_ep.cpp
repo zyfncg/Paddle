@@ -1906,6 +1906,211 @@ Buffer::internode_notify_dispatch(
           recv_gbl_rank_prefix_sum};
 }
 
+std::tuple<int,
+           int,
+           deep_ep::detail::Tensor,
+           deep_ep::detail::Tensor,
+           deep_ep::detail::Tensor,
+           deep_ep::detail::Tensor,
+           deep_ep::detail::Tensor>
+Buffer::internode_notify_combine(
+    const deep_ep::detail::Tensor& x,
+    const std::optional<deep_ep::detail::Tensor>& x_scales,
+    const std::optional<deep_ep::detail::Tensor>& topk_idx,
+    const std::optional<deep_ep::detail::Tensor>& num_tokens_per_rank,
+    const std::optional<deep_ep::detail::Tensor>& num_tokens_per_rdma_rank,
+    const std::optional<deep_ep::detail::Tensor>& num_tokens_per_expert,
+    const deep_ep::detail::Tensor& is_token_in_rank,
+    int expert_alignment,
+    const Config& config,
+    std::optional<EventHandle>& previous_event,  // NOLINT
+    bool async,
+    bool allocate_on_comm_stream) {
+  const int num_channels = config.num_sms / 2;
+  EP_HOST_ASSERT(config.num_sms % 2 == 0);
+  EP_HOST_ASSERT(0 < get_num_rdma_ranks() &&
+                 get_num_rdma_ranks() <= NUM_MAX_RDMA_PEERS);
+
+  EP_HOST_ASSERT(num_tokens_per_rank->scalar_type() == deep_ep::detail::kInt32);
+  EP_HOST_ASSERT(num_tokens_per_rdma_rank->scalar_type() ==
+                 deep_ep::detail::kInt32);
+  EP_HOST_ASSERT(num_tokens_per_expert->scalar_type() ==
+                 deep_ep::detail::kInt32);
+
+  // Shape and contiguous checks
+  EP_HOST_ASSERT(x.dim() == 2 && x.is_contiguous());
+  EP_HOST_ASSERT((x.size(1) * x.element_size()) % sizeof(int4) == 0);
+  EP_HOST_ASSERT(num_tokens_per_rank->dim() == 1 &&
+                 num_tokens_per_rank->is_contiguous());
+  EP_HOST_ASSERT(num_tokens_per_rdma_rank->dim() == 1 &&
+                 num_tokens_per_rdma_rank->is_contiguous());
+  EP_HOST_ASSERT(num_tokens_per_expert->dim() == 1 &&
+                 num_tokens_per_expert->is_contiguous());
+  EP_HOST_ASSERT(num_tokens_per_rank->size(0) == num_ranks);
+  EP_HOST_ASSERT(num_tokens_per_rdma_rank->size(0) == num_rdma_ranks);
+  EP_HOST_ASSERT(num_tokens_per_expert->size(0) % num_ranks == 0);
+  EP_HOST_ASSERT(num_tokens_per_expert->size(0) / num_ranks <=
+                 NUM_MAX_LOCAL_EXPERTS);
+
+  int num_scales = 0;
+  if (x_scales.has_value()) {
+    num_scales = x_scales->dim() == 1 ? 1 : static_cast<int>(x_scales->size(1));
+  }
+
+  auto num_tokens = static_cast<int>(x.size(0)),
+       hidden = static_cast<int>(x.size(1)),
+       hidden_int4 =
+           static_cast<int>(x.size(1) * x.element_size() / sizeof(int4));
+  auto num_experts = static_cast<int>(num_tokens_per_expert->size(0)),
+       num_local_experts = num_experts / num_ranks;
+
+  // Top-k checks
+  int num_topk = 0;
+  if (topk_idx.has_value()) {
+    num_topk = static_cast<int>(topk_idx->size(1));
+    EP_HOST_ASSERT(num_experts > 0);
+    EP_HOST_ASSERT(topk_idx->dim() == 2 && topk_idx->is_contiguous());
+    EP_HOST_ASSERT(num_tokens == topk_idx->size(0));
+  }
+
+  // Allocate all tensors on comm stream if set
+  // NOTES: do not allocate tensors upfront!
+  auto compute_stream = calc_ctx->stream();
+  if (allocate_on_comm_stream) {
+    EP_HOST_ASSERT(previous_event.has_value() && async);
+    deep_ep::detail::SetAllocatorStreamForGPUContext(comm_stream, calc_ctx);
+  }
+
+  // Wait previous tasks to be finished
+  if (previous_event.has_value()) {
+    stream_wait(comm_stream, previous_event.value());
+  } else {
+    stream_wait(comm_stream, compute_stream);
+  }
+
+  // Create handles (only return for non-cached mode)
+  int num_recv_tokens = -1, num_rdma_recv_tokens = -1;
+
+  auto rdma_channel_prefix_matrix = ConvertPaddleTensorToDetailTensor(
+      paddle::experimental::empty({num_rdma_ranks, num_channels},
+                                  phi::DataType::INT32,
+                                  phi::GPUPlace(device_id)));
+  auto recv_rdma_rank_prefix_sum =
+      ConvertPaddleTensorToDetailTensor(paddle::experimental::empty(
+          {num_rdma_ranks}, phi::DataType::INT32, phi::GPUPlace(device_id)));
+  auto gbl_channel_prefix_matrix = ConvertPaddleTensorToDetailTensor(
+      paddle::experimental::empty({num_ranks, num_channels},
+                                  phi::DataType::INT32,
+                                  phi::GPUPlace(device_id)));
+  auto recv_gbl_rank_prefix_sum =
+      ConvertPaddleTensorToDetailTensor(paddle::experimental::empty(
+          {num_ranks}, phi::DataType::INT32, phi::GPUPlace(device_id)));
+
+  auto recv_rdma_channel_prefix_matrix = ConvertPaddleTensorToDetailTensor(
+      paddle::experimental::empty({num_rdma_ranks, num_channels},
+                                  phi::DataType::INT32,
+                                  phi::GPUPlace(device_id)));
+  auto recv_gbl_channel_prefix_matrix =
+      ConvertPaddleTensorToDetailTensor(paddle::experimental::empty(
+          {num_ranks}, phi::DataType::INT32, phi::GPUPlace(device_id)));
+
+  auto send_rdma_head = ConvertPaddleTensorToDetailTensor(
+      paddle::experimental::empty({num_tokens, num_ranks / NUM_MAX_NVL_PEERS},
+                                  phi::DataType::INT32,
+                                  phi::GPUPlace(device_id)));
+  auto send_nvl_head =
+      ConvertPaddleTensorToDetailTensor(paddle::experimental::empty(
+          {num_tokens, num_ranks / NUM_MAX_NVL_PEERS, 8},
+          phi::DataType::INT32,
+          phi::GPUPlace(device_id)));
+
+  // Send sizes
+  *moe_recv_counter = -1, *moe_recv_rdma_counter = -1;
+  for (int i = 0; i < num_local_experts; ++i) moe_recv_expert_counter[i] = -1;
+  internode::notify_combine(
+      num_tokens_per_rank->data_ptr<int>(),
+      moe_recv_counter_mapped,
+      num_ranks,
+      num_tokens_per_rdma_rank->data_ptr<int>(),
+      moe_recv_rdma_counter_mapped,
+      num_tokens_per_expert->data_ptr<int>(),
+      moe_recv_expert_counter_mapped,
+      num_experts,
+      is_token_in_rank.data_ptr<bool>(),
+      num_tokens,
+      num_channels,
+      hidden_int4,
+      num_scales,
+      num_topk,
+      expert_alignment,
+      rdma_channel_prefix_matrix.data_ptr<int>(),
+      recv_rdma_rank_prefix_sum.data_ptr<int>(),
+      gbl_channel_prefix_matrix.data_ptr<int>(),
+      recv_gbl_rank_prefix_sum.data_ptr<int>(),
+      recv_rdma_channel_prefix_matrix.data_ptr<int>(),
+      recv_gbl_channel_prefix_matrix.data_ptr<int>(),
+      send_rdma_head.data_ptr<int>(),
+      send_nvl_head.data_ptr<int>(),
+      rdma_buffer_ptr,
+      config.num_max_rdma_chunked_recv_tokens,
+      buffer_ptrs_gpu,
+      config.num_max_nvl_chunked_recv_tokens,
+      barrier_signal_ptrs_gpu,
+      rank,
+      comm_stream,
+      config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
+      num_nvl_bytes,
+      low_latency_mode);
+
+  // Synchronize total received tokens and tokens per expert
+  auto start_time = std::chrono::high_resolution_clock::now();
+  while (true) {
+    // Read total count
+    num_recv_tokens = static_cast<int>(*moe_recv_counter);
+    num_rdma_recv_tokens = static_cast<int>(*moe_recv_rdma_counter);
+
+    // Read per-expert count
+    bool ready = (num_recv_tokens >= 0) && (num_rdma_recv_tokens >= 0);
+
+    if (ready) break;
+
+    // Timeout check
+    if (std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::high_resolution_clock::now() - start_time)
+            .count() > NUM_CPU_TIMEOUT_SECS) {
+      LOG(INFO) << "Global rank: " << rank
+                << ", num_recv_tokens: " << num_recv_tokens
+                << ", num_rdma_recv_tokens: " << num_rdma_recv_tokens;
+      throw std::runtime_error("DeepEP error: timeout (dispatch CPU)");
+    }
+  }
+
+  // Wait streams
+  std::optional<EventHandle> event;
+  if (async) {
+    event = EventHandle(comm_stream);
+    for (auto& t : {x,
+                    is_token_in_rank,
+                    rdma_channel_prefix_matrix,
+                    recv_rdma_rank_prefix_sum,
+                    gbl_channel_prefix_matrix,
+                    recv_gbl_rank_prefix_sum}) {
+      t.record_stream(comm_stream);
+      if (allocate_on_comm_stream) t.record_stream(compute_stream);
+    }
+  } else {
+    stream_wait(compute_stream, comm_stream);
+  }
+
+  return {num_recv_tokens,
+          num_rdma_recv_tokens,
+          recv_rdma_rank_prefix_sum,
+          recv_rdma_channel_prefix_matrix,
+          recv_gbl_channel_prefix_matrix,
+          send_rdma_head,
+          send_nvl_head};
+}
+
 std::tuple<deep_ep::detail::Tensor,
            std::optional<deep_ep::detail::Tensor>,
            std::optional<deep_ep::detail::Tensor>,
@@ -3483,6 +3688,83 @@ Buffer::internode_combine_api(
   const auto& event = std::get<2>(res);
 
   return {combined_x_, combined_topk_weights_, event};
+#else
+  LOG(ERROR) << "NVSHMEM is not enabled. You can enable it by setting cmake "
+                "option WITH_NVSHMEM=ON.";
+  return {};
+#endif
+}
+
+std::tuple<int,
+           int,
+           paddle::Tensor,
+           paddle::Tensor,
+           paddle::Tensor,
+           paddle::Tensor,
+           paddle::Tensor>
+Buffer::internode_notify_combine_api(
+    const paddle::Tensor& x,
+    const std::optional<paddle::Tensor>& x_scales,
+    const std::optional<paddle::Tensor>& topk_idx,
+    const std::optional<paddle::Tensor>& num_tokens_per_rank,
+    const std::optional<paddle::Tensor>& num_tokens_per_rdma_rank,
+    const std::optional<paddle::Tensor>& num_tokens_per_expert,
+    const paddle::Tensor& is_token_in_rank,
+    int expert_alignment,
+    const Config& config,
+    std::optional<EventHandle>& previous_event,  // NOLINT
+    bool async,
+    bool allocate_on_comm_stream) {
+#ifdef PADDLE_WITH_NVSHMEM
+  const auto& x_ = ConvertPaddleTensorToDetailTensor(x);
+  std::optional<deep_ep::detail::Tensor> x_scales_ =
+      ConvertOptionalPaddleTensorToDetailTensor(x_scales);
+
+  std::optional<deep_ep::detail::Tensor> topk_idx_ =
+      ConvertOptionalPaddleTensorToDetailTensor(topk_idx);
+  std::optional<deep_ep::detail::Tensor> num_tokens_per_rank_ =
+      ConvertOptionalPaddleTensorToDetailTensor(num_tokens_per_rank);
+  std::optional<deep_ep::detail::Tensor> num_tokens_per_rdma_rank_ =
+      ConvertOptionalPaddleTensorToDetailTensor(num_tokens_per_rdma_rank);
+  std::optional<deep_ep::detail::Tensor> num_tokens_per_expert_ =
+      ConvertOptionalPaddleTensorToDetailTensor(num_tokens_per_expert);
+  const auto& is_token_in_rank_ =
+      ConvertPaddleTensorToDetailTensor(is_token_in_rank);
+
+  auto res = internode_notify_combine(x_,
+                                      x_scales_,
+                                      topk_idx_,
+                                      num_tokens_per_rank_,
+                                      num_tokens_per_rdma_rank_,
+                                      num_tokens_per_expert_,
+                                      is_token_in_rank_,
+                                      expert_alignment,
+                                      config,
+                                      previous_event,
+                                      async,
+                                      allocate_on_comm_stream);
+
+  auto num_recv_tokens_ = std::get<0>(res);
+  auto num_rdma_recv_tokens_ = std::get<1>(res);
+  auto recv_rdma_rank_prefix_sum_ =
+      ConvertDetailTensorToPaddleTensor(std::get<2>(res));
+
+  auto recv_rdma_channel_prefix_matrix_ =
+      ConvertDetailTensorToPaddleTensor(std::get<3>(res));
+
+  auto recv_gbl_channel_prefix_matrix_ =
+      ConvertDetailTensorToPaddleTensor(std::get<4>(res));
+
+  auto send_rdma_head_ = ConvertDetailTensorToPaddleTensor(std::get<5>(res));
+  auto send_nvl_head_ = ConvertDetailTensorToPaddleTensor(std::get<6>(res));
+
+  return {num_recv_tokens_,
+          num_rdma_recv_tokens_,
+          recv_rdma_rank_prefix_sum_,
+          recv_rdma_channel_prefix_matrix_,
+          recv_gbl_channel_prefix_matrix_,
+          send_rdma_head_,
+          send_nvl_head_};
 #else
   LOG(ERROR) << "NVSHMEM is not enabled. You can enable it by setting cmake "
                 "option WITH_NVSHMEM=ON.";
