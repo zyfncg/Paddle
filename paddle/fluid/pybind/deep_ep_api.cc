@@ -97,8 +97,9 @@ void BindDeepEPApi(pybind11::module *m) {
       .def("internode_dispatch", &deep_ep::Buffer::internode_dispatch_api)
       .def("internode_notify_dispatch",
            &deep_ep::Buffer::internode_notify_dispatch_api)
-      .def("clear_buffer",
-           &deep_ep::Buffer::clear_buffer_api)
+      .def("clear_buffer", &deep_ep::Buffer::clear_buffer_api)
+      .def("internode_notify_combine",
+           &deep_ep::Buffer::internode_notify_combine_api)
       .def("internode_combine", &deep_ep::Buffer::internode_combine_api)
       .def("barrier_all", &deep_ep::Buffer::barrier_all)
       .def("clean_low_latency_buffer",
