@@ -1794,7 +1794,8 @@ Buffer::internode_notify_dispatch(
         config.num_max_rdma_chunked_recv_tokens,
         buffer_ptrs_gpu,
         config.num_max_nvl_chunked_recv_tokens,
-        barrier_signal_ptrs_gpu,
+        task_fifo_ptrs_gpu,
+        head,
         rank,
         comm_stream,
         config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
@@ -1844,7 +1845,8 @@ Buffer::internode_notify_dispatch(
         config.num_max_rdma_chunked_recv_tokens,
         buffer_ptrs_gpu,
         config.num_max_nvl_chunked_recv_tokens,
-        barrier_signal_ptrs_gpu,
+        task_fifo_ptrs_gpu,
+        head,
         rank,
         comm_stream,
         config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
@@ -2065,7 +2067,8 @@ Buffer::internode_notify_combine(
       config.num_max_rdma_chunked_recv_tokens,
       buffer_ptrs_gpu,
       config.num_max_nvl_chunked_recv_tokens,
-      barrier_signal_ptrs_gpu,
+      task_fifo_ptrs_gpu,
+      head,
       rank,
       comm_stream,
       config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
@@ -2180,7 +2183,7 @@ Buffer::internode_dispatch_after_notify(
 
   // FP8 scales checks
   float* x_scales_ptr = nullptr;
-  int num_scales = 0, scale_token_stride = 0, scale_hidden_stride = 0;
+  int num_scales = 0;
   if (x_scales.has_value()) {
     EP_HOST_ASSERT(x.element_size() == 1);
     EP_HOST_ASSERT(x_scales->scalar_type() == deep_ep::detail::kFloat32);
@@ -2189,8 +2192,6 @@ Buffer::internode_dispatch_after_notify(
     EP_HOST_ASSERT(x_scales->size(0) == num_tokens);
     num_scales = x_scales->dim() == 1 ? 1 : static_cast<int>(x_scales->size(1));
     x_scales_ptr = x_scales->data_ptr<float>();
-    scale_token_stride = static_cast<int>(x_scales->stride(0));
-    scale_hidden_stride = static_cast<int>(x_scales->stride(1));
   }
 
   // Allocate all tensors on comm stream if set
@@ -2292,14 +2293,12 @@ Buffer::internode_dispatch_after_notify(
       recv_rdma_rank_prefix_sum.data_ptr<int>(),
       gbl_channel_prefix_matrix.data_ptr<int>(),
       recv_gbl_rank_prefix_sum.data_ptr<int>(),
-      is_token_in_rank.data_ptr<bool>(),
       num_tokens,
       hidden_int4,
       num_scales,
       num_topk,
       num_experts,
-      scale_token_stride,
-      scale_hidden_stride,
+      is_token_in_rank.data_ptr<bool>(),
       rdma_buffer_ptr,
       config.num_max_rdma_chunked_send_tokens,
       config.num_max_rdma_chunked_recv_tokens,
