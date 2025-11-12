@@ -163,6 +163,7 @@ void combine(cudaDataType_t type,
 namespace internode {
 
 int get_source_meta_bytes();
+int get_details_source_meta_bytes();
 
 void notify_dispatch(const int* num_tokens_per_rank,
                      int* moe_recv_counter_mapped,
@@ -264,7 +265,15 @@ void dispatch(void* recv_x,
               bool is_cached_dispatch,
               cudaStream_t stream,
               int num_channels,
-              bool low_latency_mode);
+              bool low_latency_mode,
+              bool is_asymmetric_mode,
+              const int* asymm_send_combine_schedule_map,
+              const int* asymm_recv_rdma_counter_loop_prefix_sum,
+              const int* asymm_recv_rdma_rank_prefix_sum,
+              const int* asymm_recv_rdma_channel_prefix_matrix,
+              const int* asymm_send_rdma_head,
+              const int* asymm_send_nvl_head,
+              int* asymm_aggregated_nvl_head);
 
 void cached_notify(int hidden_int4,
                    int num_scales,
@@ -290,15 +299,32 @@ void cached_notify(int hidden_int4,
                    bool is_cached_dispatch,
                    bool low_latency_mode);
 
+void clear_buffer(int hidden_int4,
+                   int num_scales,
+                   int num_topk_idx,
+                   int num_topk_weights,
+                   int num_ranks,
+                   int num_channels,
+                   void* rdma_buffer_ptr,
+                   int num_max_rdma_chunked_recv_tokens,
+                   void** buffer_ptrs,
+                   int num_max_nvl_chunked_recv_tokens,
+                   int** task_fifo_ptrs,
+                   int head,
+                   int rank,
+                   const bool is_start,
+                   const bool is_end,
+                   cudaStream_t stream,
+                   int64_t num_rdma_bytes,
+                   int64_t num_nvl_bytes);
+
 void combine(cudaDataType_t type,
              void* combined_x,
              float* combined_topk_weights,
-             const bool* is_combined_token_in_rank,
              const void* x,
              const float* topk_weights,
              const int* combined_rdma_head,
              const int* combined_nvl_head,
-             const void* src_meta,
              const int* rdma_channel_prefix_matrix,
              const int* rdma_rank_prefix_sum,
              const int* gbl_channel_prefix_matrix,
@@ -316,7 +342,8 @@ void combine(cudaDataType_t type,
              int num_ranks,
              cudaStream_t stream,
              int num_channels,
-             bool low_latency_mode);
+             bool low_latency_mode,
+             bool inplace_float_combine);
 
 }  // namespace internode
 
