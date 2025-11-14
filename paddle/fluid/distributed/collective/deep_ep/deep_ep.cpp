@@ -1757,9 +1757,10 @@ Buffer::internode_notify_combine(
       paddle::experimental::empty({num_rdma_ranks, num_channels},
                                   phi::DataType::INT32,
                                   phi::GPUPlace(device_id)));
-  auto recv_gbl_channel_prefix_matrix =
-      ConvertPaddleTensorToDetailTensor(paddle::experimental::empty(
-          {num_ranks}, phi::DataType::INT32, phi::GPUPlace(device_id)));
+  auto recv_gbl_channel_prefix_matrix = ConvertPaddleTensorToDetailTensor(
+      paddle::experimental::empty({num_ranks, num_channels},
+                                  phi::DataType::INT32,
+                                  phi::GPUPlace(device_id)));
 
   auto send_rdma_head = ConvertPaddleTensorToDetailTensor(
       paddle::experimental::empty({num_tokens, num_ranks / NUM_MAX_NVL_PEERS},
@@ -1770,7 +1771,6 @@ Buffer::internode_notify_combine(
           {num_tokens, num_ranks / NUM_MAX_NVL_PEERS, 8},
           phi::DataType::INT32,
           phi::GPUPlace(device_id)));
-  std::cout << "##### before notify_combine #### " << std::endl;
 
   // Send sizes
   *moe_recv_counter = -1, *moe_recv_rdma_counter = -1;
@@ -1807,6 +1807,22 @@ Buffer::internode_notify_combine(
       num_nvl_bytes,
       low_latency_mode);
 
+  internode::notify_combine_post_step(
+      num_ranks,
+      num_channels,
+      recv_gbl_rank_prefix_sum.data_ptr<int>(),
+      rdma_channel_prefix_matrix.data_ptr<int>(),
+      gbl_channel_prefix_matrix.data_ptr<int>(),
+      recv_rdma_channel_prefix_matrix.data_ptr<int>(),
+      recv_gbl_channel_prefix_matrix.data_ptr<int>(),
+      rdma_buffer_ptr,
+      buffer_ptrs_gpu,
+      task_fifo_ptrs_gpu,
+      head,
+      rank,
+      comm_stream,
+      low_latency_mode);
+
   // Synchronize total received tokens and tokens per expert
   auto start_time = std::chrono::high_resolution_clock::now();
   while (true) {
@@ -1829,9 +1845,6 @@ Buffer::internode_notify_combine(
       throw std::runtime_error("DeepEP error: timeout (dispatch CPU)");
     }
   }
-
-  std::cout << "##### rank: " << rank
-            << ", num_recv_tokens: " << num_recv_tokens << std::endl;
 
   // Wait streams
   stream_wait(compute_stream, comm_stream);

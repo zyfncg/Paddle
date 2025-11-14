@@ -228,6 +228,21 @@ void notify_combine(const int* num_tokens_per_rank,
                     int64_t num_nvl_bytes,
                     bool low_latency_mode);
 
+void notify_combine_post_step(int num_ranks,
+                              int num_channels,
+                              const int* recv_gbl_rank_prefix_sum,
+                              const int* rdma_channel_prefix_matrix,
+                              const int* gbl_channel_prefix_matrix,
+                              int* recv_rdma_channel_prefix_matrix,
+                              int* recv_gbl_channel_prefix_matrix,
+                              void* rdma_buffer_ptr,
+                              void** buffer_ptrs,
+                              int** task_fifo_ptrs,
+                              int head,
+                              int rank,
+                              cudaStream_t stream,
+                              bool low_latency_mode);
+
 void dispatch(void* recv_x,
               float* recv_x_scales,
               int64_t* recv_topk_idx,
