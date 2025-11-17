@@ -635,7 +635,7 @@ class Buffer:
         async_finish: bool = False,
         allocate_on_comm_stream: bool = False,
         num_experts: int = 0,
-        asymmetric_handle = None
+        asymmetric_handle=None,
     ) -> tuple[
         tuple[paddle.Tensor, paddle.Tensor] | paddle.Tensor,
         paddle.Tensor | None,
@@ -654,7 +654,7 @@ class Buffer:
         x, x_scales = x if isinstance(x, tuple) else (x, None)
         if handle is not None:
             assert num_experts > 0
-            
+
             if asymmetric_handle is not None:
                 (
                     asymm_send_combine_schedule_map,
@@ -694,40 +694,44 @@ class Buffer:
                 recv_topk_idx,
                 recv_topk_weights,
                 num_recv_tokens_per_expert_list,
-                _, _, _, _, _, _,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
                 recv_src_meta,
-                _, _,
+                _,
+                _,
                 event,
-            ) = (
-                self.runtime.internode_dispatch(
-                    x,
-                    x_scales,
-                    topk_idx,
-                    topk_weights,
-                    None,
-                    None,
-                    is_token_in_rank,
-                    None,
-                    num_recv_tokens,
-                    num_rdma_recv_tokens,
-                    rdma_channel_prefix_matrix,
-                    recv_rdma_rank_prefix_sum,
-                    gbl_channel_prefix_matrix,
-                    recv_gbl_rank_prefix_sum,
-                    asymm_send_combine_schedule_map,
-                    asymm_recv_rdma_counter_loop_prefix_sum,
-                    asymm_recv_rdma_rank_prefix_sum,
-                    asymm_recv_rdma_channel_prefix_matrix,
-                    asymm_send_rdma_head,
-                    asymm_send_nvl_head,
-                    asymm_aggregated_nvl_head,
-                    expert_alignment,
-                    config,
-                    getattr(previous_event, 'event', None),
-                    async_finish,
-                    allocate_on_comm_stream,
-                    num_experts,
-                )
+            ) = self.runtime.internode_dispatch(
+                x,
+                x_scales,
+                topk_idx,
+                topk_weights,
+                None,
+                None,
+                is_token_in_rank,
+                None,
+                num_recv_tokens,
+                num_rdma_recv_tokens,
+                rdma_channel_prefix_matrix,
+                recv_rdma_rank_prefix_sum,
+                gbl_channel_prefix_matrix,
+                recv_gbl_rank_prefix_sum,
+                asymm_send_combine_schedule_map,
+                asymm_recv_rdma_counter_loop_prefix_sum,
+                asymm_recv_rdma_rank_prefix_sum,
+                asymm_recv_rdma_channel_prefix_matrix,
+                asymm_send_rdma_head,
+                asymm_send_nvl_head,
+                asymm_aggregated_nvl_head,
+                expert_alignment,
+                config,
+                getattr(previous_event, 'event', None),
+                async_finish,
+                allocate_on_comm_stream,
+                num_experts,
             )
             handle = (
                 is_token_in_rank,
@@ -740,7 +744,7 @@ class Buffer:
                 recv_src_meta,
                 send_rdma_head,
                 send_nvl_head,
-            ) 
+            )
             return (
                 (recv_x, recv_x_scales) if x_scales is not None else recv_x,
                 recv_topk_idx,
@@ -892,6 +896,63 @@ class Buffer:
             num_recv_tokens,
             num_rdma_recv_tokens,
             handle,
+        )
+
+    def internode_notify_combine(
+        self,
+        x: paddle.Tensor | tuple[paddle.Tensor, paddle.Tensor],
+        topk_idx: paddle.Tensor | None = None,
+        num_tokens_per_rank: paddle.Tensor | None = None,
+        num_tokens_per_rdma_rank: paddle.Tensor | None = None,
+        is_token_in_rank: paddle.Tensor | None = None,
+        expert_alignment: int = 1,
+        config: Config | None = None,
+    ) -> tuple[
+        int,
+        int,
+        paddle.Tensor,
+        paddle.Tensor,
+        paddle.Tensor,
+        paddle.Tensor,
+        paddle.Tensor,
+    ]:
+        # Default config
+        config = (
+            self.get_dispatch_config(self.group_size)
+            if config is None
+            else config
+        )
+        # Launch the kernel with cached or non-cached mode
+        x, x_scales = x if isinstance(x, tuple) else (x, None)
+        assert num_tokens_per_rank is not None and is_token_in_rank is not None
+
+        (
+            num_recv_tokens,
+            num_rdma_recv_tokens,
+            recv_rdma_rank_prefix_sum,
+            recv_rdma_channel_prefix_matrix,
+            recv_gbl_channel_prefix_matrix,
+            send_rdma_head,
+            send_nvl_head,
+        ) = self.runtime.internode_notify_combine(
+            x,
+            x_scales,
+            topk_idx,
+            num_tokens_per_rank,
+            num_tokens_per_rdma_rank,
+            is_token_in_rank,
+            expert_alignment,
+            config,
+        )
+
+        return (
+            num_recv_tokens,
+            num_rdma_recv_tokens,
+            recv_rdma_rank_prefix_sum,
+            recv_rdma_channel_prefix_matrix,
+            recv_gbl_channel_prefix_matrix,
+            send_rdma_head,
+            send_nvl_head,
         )
 
     # noinspection PyTypeChecker
@@ -1327,15 +1388,9 @@ class Buffer:
             EventOverlap(event, tensors_to_record if async_finish else None),
             hook,
         )
-    
+
     def clear_buffer(
-        self,
-        x,
-        x_scales,
-        topk_idx,
-        is_start = False,
-        is_end = False,
-        config = None
+        self, x, x_scales, topk_idx, is_start=False, is_end=False, config=None
     ):
         config = (
             self.get_dispatch_config(self.group_size)
