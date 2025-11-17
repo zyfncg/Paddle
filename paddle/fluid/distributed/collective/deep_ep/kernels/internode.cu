@@ -1792,23 +1792,23 @@ __global__ void __launch_bounds__(
             auto shifted_asymm_recv_rdma_channel_prefix_matrix =
                 asymm_recv_rdma_channel_prefix_matrix +
                 src_meta.combine_loop_idx * kNumRDMARanks * num_channels;
-            int asymm_rdma_start_idx =
+            int64_t asymm_rdma_start_idx =
                 src_rdma_rank == 0
                     ? 0
                     : ld_nc_global(shifted_asymm_recv_rdma_rank_prefix_sum +
                                    src_rdma_rank - 1);
-            int asymm_channel_start_idx =
+            int64_t asymm_channel_start_idx =
                 channel_id == 0
                     ? 0
                     : ld_nc_global(
                           shifted_asymm_recv_rdma_channel_prefix_matrix +
                           src_rdma_rank * num_channels + channel_id - 1);
-            int asymm_combine_start_idx =
+            int64_t asymm_combine_start_idx =
                 src_meta.combine_loop_idx == 0
                     ? 0
                     : asymm_recv_rdma_counter_loop_prefix_sum
                           [src_meta.combine_loop_idx - 1];
-            auto asymm_aggregated_nvl_head_offset =
+            int64_t asymm_aggregated_nvl_head_offset =
                 asymm_combine_start_idx + asymm_rdma_start_idx +
                 asymm_channel_start_idx + src_meta.send_rdma_head;
             *reinterpret_cast<int8*>(asymm_aggregated_nvl_head +
