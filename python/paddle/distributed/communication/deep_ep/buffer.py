@@ -887,9 +887,9 @@ class Buffer:
             recv_rdma_rank_prefix_sum,
             None,
             recv_gbl_rank_prefix_sum,
-            paddle.empty([num_recv_tokens]),
+            paddle.empty([num_recv_tokens, 0]),
             None,
-            paddle.empty([num_rdma_recv_tokens]),
+            paddle.empty([num_rdma_recv_tokens, 0]),
         )
         return (
             num_recv_tokens_per_expert_list,
