@@ -724,18 +724,14 @@ __global__ void notify_combine(const int* num_tokens_per_rank,
             dst_rdma_rank * NUM_MAX_NVL_PEERS);
         auto is_token_in_rank_values =
             reinterpret_cast<const bool*>(&is_token_in_rank_uint64);
-#pragma unroll
-        for (int j = 0; j < NUM_MAX_NVL_PEERS; ++j) {
-          per_nvl_rank_count[j] += is_token_in_rank_values[j];
-          global_nvl_tail_idx[j] += is_token_in_rank_values[j];
-        }
+
         total_count += (is_token_in_rank_uint64 != 0);
 
         // Calculate RDMA tail index for combine
-        global_rdma_tail_idx += (is_token_in_rank_uint64 != 0);
         auto warp_valid_tokens = std::min(token_end_idx - (i - lane_id), 32);
         unsigned int mask = 0xffffffff >> (32 - warp_valid_tokens);
-        global_rdma_tail_idx = warp_scan(global_rdma_tail_idx, mask);
+        int warp_rdma_tail_idx = (is_token_in_rank_uint64 != 0);
+        global_rdma_tail_idx += warp_scan(warp_rdma_tail_idx, mask);
         auto rdma_tail_idx =
             is_token_in_rank_uint64 == 0 ? -1 : global_rdma_tail_idx - 1;
         send_rdma_head[i * kNumRDMARanks + dst_rdma_rank] = rdma_tail_idx;
@@ -744,7 +740,9 @@ __global__ void notify_combine(const int* num_tokens_per_rank,
 
 #pragma unroll
         for (int j = 0; j < NUM_MAX_NVL_PEERS; ++j) {
-          global_nvl_tail_idx[j] = warp_scan(global_nvl_tail_idx[j], mask);
+          per_nvl_rank_count[j] += is_token_in_rank_values[j];
+          int warp_nvl_tail_idx = (is_token_in_rank_values[j]);
+          global_nvl_tail_idx[j] += warp_scan(warp_nvl_tail_idx, mask);
           auto nvl_tail_idx =
               is_token_in_rank_values[j] == 0 ? -1 : global_nvl_tail_idx[j] - 1;
           send_nvl_head[i * kNumRDMARanks * NUM_MAX_NVL_PEERS +
