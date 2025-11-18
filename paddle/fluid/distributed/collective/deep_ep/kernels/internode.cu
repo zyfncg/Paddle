@@ -2641,6 +2641,9 @@ __device__ int combine_token(bool is_token_in_rank,
 #pragma unroll
     for (int i = 0; i < num_topk_ranks; ++i)
       value += recv_tw_fn(topk_ranks[i], slot_indices[i], lane_id);
+    if (inplace_float_combine) {
+      value += ld_nc_global(combined_topk_weights + lane_id);
+    }
     st_na_global(combined_topk_weights + lane_id, value);
   }
 
@@ -2657,7 +2660,7 @@ template <
     int kNumWarpsPerForwarder = (kNumCombineForwarderWarps / kNumRDMARanks > 0)
                                     ? kNumCombineForwarderWarps / kNumRDMARanks
                                     : 1,
-    int kNumForwarders = kNumRDMARanks * kNumWarpsPerForwarder,
+    int kNumForwarders = kNumRDMARanks* kNumWarpsPerForwarder,
     int kNumRDMAReceivers = kNumForwarders + NUM_MAX_NVL_PEERS>
 __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
                                   1)

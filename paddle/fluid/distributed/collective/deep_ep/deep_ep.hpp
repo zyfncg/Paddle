@@ -252,18 +252,20 @@ struct Buffer {
   std::tuple<std::optional<deep_ep::detail::Tensor>,
              std::optional<deep_ep::detail::Tensor>,
              std::optional<EventHandle>>
-  internode_combine(const deep_ep::detail::Tensor& x,
-                    const std::optional<deep_ep::detail::Tensor>& topk_weights,
-                    const deep_ep::detail::Tensor& rdma_channel_prefix_matrix,
-                    const deep_ep::detail::Tensor& rdma_rank_prefix_sum,
-                    const deep_ep::detail::Tensor& gbl_channel_prefix_matrix,
-                    const deep_ep::detail::Tensor& combined_rdma_head,
-                    const deep_ep::detail::Tensor& combined_nvl_head,
-                    const std::optional<deep_ep::detail::Tensor>& combined_x,
-                    const Config& config,
-                    std::optional<EventHandle>& previous_event,  // NOLINT
-                    bool async,
-                    bool allocate_on_comm_stream);
+  internode_combine(
+      const deep_ep::detail::Tensor& x,
+      const std::optional<deep_ep::detail::Tensor>& topk_weights,
+      const deep_ep::detail::Tensor& rdma_channel_prefix_matrix,
+      const deep_ep::detail::Tensor& rdma_rank_prefix_sum,
+      const deep_ep::detail::Tensor& gbl_channel_prefix_matrix,
+      const deep_ep::detail::Tensor& combined_rdma_head,
+      const deep_ep::detail::Tensor& combined_nvl_head,
+      const std::optional<deep_ep::detail::Tensor>& combined_x,
+      const std::optional<deep_ep::detail::Tensor>& combined_topk_weights,
+      const Config& config,
+      std::optional<EventHandle>& previous_event,  // NOLINT
+      bool async,
+      bool allocate_on_comm_stream);
 
   std::tuple<std::vector<int>,         // num_recv_tokens_per_expert_list
              int,                      // num_recv_tokens
@@ -430,18 +432,20 @@ struct Buffer {
   std::tuple<std::optional<paddle::Tensor>,
              std::optional<paddle::Tensor>,
              std::optional<EventHandle>>
-  internode_combine_api(const paddle::Tensor& x,
-                        const std::optional<paddle::Tensor>& topk_weights,
-                        const paddle::Tensor& rdma_channel_prefix_matrix,
-                        const paddle::Tensor& rdma_rank_prefix_sum,
-                        const paddle::Tensor& gbl_channel_prefix_matrix,
-                        const paddle::Tensor& combined_rdma_head,
-                        const paddle::Tensor& combined_nvl_head,
-                        const std::optional<paddle::Tensor>& combined_x,
-                        const Config& config,
-                        std::optional<EventHandle>& previous_event,  // NOLINT
-                        bool async,
-                        bool allocate_on_comm_stream);
+  internode_combine_api(
+      const paddle::Tensor& x,
+      const std::optional<paddle::Tensor>& topk_weights,
+      const paddle::Tensor& rdma_channel_prefix_matrix,
+      const paddle::Tensor& rdma_rank_prefix_sum,
+      const paddle::Tensor& gbl_channel_prefix_matrix,
+      const paddle::Tensor& combined_rdma_head,
+      const paddle::Tensor& combined_nvl_head,
+      const std::optional<paddle::Tensor>& combined_x,
+      const std::optional<paddle::Tensor>& combined_topk_weights,
+      const Config& config,
+      std::optional<EventHandle>& previous_event,  // NOLINT
+      bool async,
+      bool allocate_on_comm_stream);
 
   std::tuple<int,
              int,
