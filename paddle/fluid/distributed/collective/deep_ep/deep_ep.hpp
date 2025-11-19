@@ -302,6 +302,23 @@ struct Buffer {
       int expert_alignment,
       const Config& config);
 
+  std::tuple<std::vector<int>,
+             std::vector<int>,
+             deep_ep::detail::Tensor,
+             deep_ep::detail::Tensor,
+             deep_ep::detail::Tensor,
+             deep_ep::detail::Tensor,
+             deep_ep::detail::Tensor>
+  internode_fused_notify_combine(
+      const deep_ep::detail::Tensor& x,
+      const std::optional<deep_ep::detail::Tensor>& x_scales,
+      const std::optional<deep_ep::detail::Tensor>& topk_idx,
+      const std::optional<deep_ep::detail::Tensor>& num_tokens_per_rank,
+      const std::optional<deep_ep::detail::Tensor>& num_tokens_per_rdma_rank,
+      const deep_ep::detail::Tensor& is_token_in_rank,
+      int num_loop_stage,
+      const Config& config);
+
 #endif  // PADDLE_WITH_NVSHMEM
 
   void clean_low_latency_buffer(int num_max_dispatch_tokens_per_rank,
@@ -462,6 +479,23 @@ struct Buffer {
       const std::optional<paddle::Tensor>& num_tokens_per_rdma_rank,
       const paddle::Tensor& is_token_in_rank,
       int expert_alignment,
+      const Config& config);
+
+  std::tuple<std::vector<int>,
+             std::vector<int>,
+             paddle::Tensor,
+             paddle::Tensor,
+             paddle::Tensor,
+             paddle::Tensor,
+             paddle::Tensor>
+  internode_fused_notify_combine_api(
+      const paddle::Tensor& x,
+      const std::optional<paddle::Tensor>& x_scales,
+      const std::optional<paddle::Tensor>& topk_idx,
+      const std::optional<paddle::Tensor>& num_tokens_per_rank,
+      const std::optional<paddle::Tensor>& num_tokens_per_rdma_rank,
+      const paddle::Tensor& is_token_in_rank,
+      int num_loop_stages,
       const Config& config);
 
   std::tuple<paddle::Tensor,
