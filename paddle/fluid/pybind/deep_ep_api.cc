@@ -97,6 +97,8 @@ void BindDeepEPApi(pybind11::module *m) {
       .def("internode_dispatch", &deep_ep::Buffer::internode_dispatch_api)
       .def("internode_notify_dispatch",
            &deep_ep::Buffer::internode_notify_dispatch_api)
+      .def("internode_fused_notify_dispatch",
+           &deep_ep::Buffer::internode_fused_notify_dispatch_api)
       .def("clear_buffer", &deep_ep::Buffer::clear_buffer_api)
       .def("internode_notify_combine",
            &deep_ep::Buffer::internode_notify_combine_api)

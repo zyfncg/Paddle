@@ -286,6 +286,25 @@ struct Buffer {
       int expert_alignment,
       const Config& config);
 
+  std::tuple<std::vector<std::vector<int>>,
+             std::vector<int>,
+             std::vector<int>,
+             deep_ep::detail::Tensor,
+             deep_ep::detail::Tensor,
+             deep_ep::detail::Tensor,
+             deep_ep::detail::Tensor>
+  internode_fused_notify_dispatch(
+      const deep_ep::detail::Tensor& x,
+      const std::optional<deep_ep::detail::Tensor>& x_scales,
+      const std::optional<deep_ep::detail::Tensor>& topk_idx,
+      const std::optional<deep_ep::detail::Tensor>& num_tokens_per_rank,
+      const std::optional<deep_ep::detail::Tensor>& num_tokens_per_rdma_rank,
+      const std::optional<deep_ep::detail::Tensor>& num_tokens_per_expert,
+      const deep_ep::detail::Tensor& is_token_in_rank,
+      int expert_alignment,
+      int num_loop_stage,
+      const Config& config);
+
   std::tuple<int,
              int,
              deep_ep::detail::Tensor,
@@ -638,6 +657,25 @@ struct Buffer {
       const std::optional<paddle::Tensor>& num_tokens_per_expert,
       const paddle::Tensor& is_token_in_rank,
       int expert_alignment,
+      const Config& config);
+
+  std::tuple<std::vector<std::vector<int>>,
+             std::vector<int>,
+             std::vector<int>,
+             paddle::Tensor,
+             paddle::Tensor,
+             paddle::Tensor,
+             paddle::Tensor>
+  internode_fused_notify_dispatch_api(
+      const paddle::Tensor& x,
+      const std::optional<paddle::Tensor>& x_scales,
+      const std::optional<paddle::Tensor>& topk_idx,
+      const std::optional<paddle::Tensor>& num_tokens_per_rank,
+      const std::optional<paddle::Tensor>& num_tokens_per_rdma_rank,
+      const std::optional<paddle::Tensor>& num_tokens_per_expert,
+      const paddle::Tensor& is_token_in_rank,
+      int expert_alignment,
+      int num_loop_stage,
       const Config& config);
 
   void clear_buffer_api(const paddle::Tensor& x,
