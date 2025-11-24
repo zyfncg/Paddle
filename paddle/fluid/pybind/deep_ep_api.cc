@@ -61,7 +61,7 @@ void BindDeepEPApi(pybind11::module *m) {
          &deep_ep::GetEventHandleFromCustomStream);
 
   pybind11::class_<deep_ep::Buffer>(*m, "Buffer")
-      .def(pybind11::init<int, int, int64_t, int64_t, bool, int>())
+      .def(pybind11::init<int, int, int, int64_t, int64_t, bool, int>())
       .def("is_available", &deep_ep::Buffer::is_available)
       .def("get_num_rdma_ranks", &deep_ep::Buffer::get_num_rdma_ranks)
       .def("get_rdma_rank", &deep_ep::Buffer::get_rdma_rank)
@@ -100,7 +100,7 @@ void BindDeepEPApi(pybind11::module *m) {
       .def("clear_buffer", &deep_ep::Buffer::clear_buffer_api)
       .def("internode_notify_combine",
            &deep_ep::Buffer::internode_notify_combine_api)
-      .def("internode_fused_notify_combine_api",
+      .def("internode_fused_notify_combine",
            &deep_ep::Buffer::internode_fused_notify_combine_api)
       .def("internode_combine", &deep_ep::Buffer::internode_combine_api)
       .def("barrier_all", &deep_ep::Buffer::barrier_all)

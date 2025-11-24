@@ -49,6 +49,7 @@ void SetAllocatorStreamForGPUContext(cudaStream_t stream,
 
 Buffer::Buffer(int rank,
                int num_ranks,
+               int num_loop_stage,
                int64_t num_nvl_bytes,
                int64_t num_rdma_bytes,
                bool low_latency_mode,
@@ -131,8 +132,9 @@ Buffer::Buffer(int rank,
   CUDA_CHECK(cudaMemsetAsync(workspace, 0, NUM_WORKSPACE_BYTES, comm_stream));
 
   // MoE counter
-  CUDA_CHECK(cudaMallocHost(
-      &moe_recv_counter, sizeof(int64_t) * 3, cudaHostAllocMapped));
+  CUDA_CHECK(cudaMallocHost(&moe_recv_counter,
+                            sizeof(int64_t) * num_loop_stage,
+                            cudaHostAllocMapped));
   CUDA_CHECK(cudaHostGetDevicePointer(
       &moe_recv_counter_mapped, const_cast<int*>(moe_recv_counter), 0));
   *moe_recv_counter = -1;
@@ -149,8 +151,9 @@ Buffer::Buffer(int rank,
 
   // MoE RDMA-level counter
   if (num_rdma_ranks > 0) {
-    CUDA_CHECK(cudaMallocHost(
-        &moe_recv_rdma_counter, sizeof(int) * 3, cudaHostAllocMapped));
+    CUDA_CHECK(cudaMallocHost(&moe_recv_rdma_counter,
+                              sizeof(int) * num_loop_stage,
+                              cudaHostAllocMapped));
     CUDA_CHECK(cudaHostGetDevicePointer(&moe_recv_rdma_counter_mapped,
                                         const_cast<int*>(moe_recv_rdma_counter),
                                         0));
@@ -1909,12 +1912,12 @@ Buffer::internode_fused_notify_combine(
   // Shape and contiguous checks
   EP_HOST_ASSERT(x.dim() == 2 && x.is_contiguous());
   EP_HOST_ASSERT((x.size(1) * x.element_size()) % sizeof(int4) == 0);
-  EP_HOST_ASSERT(num_tokens_per_rank->dim() == 1 &&
+  EP_HOST_ASSERT(num_tokens_per_rank->dim() == 2 &&
                  num_tokens_per_rank->is_contiguous());
-  EP_HOST_ASSERT(num_tokens_per_rdma_rank->dim() == 1 &&
+  EP_HOST_ASSERT(num_tokens_per_rdma_rank->dim() == 2 &&
                  num_tokens_per_rdma_rank->is_contiguous());
-  EP_HOST_ASSERT(num_tokens_per_rank->size(0) == num_ranks);
-  EP_HOST_ASSERT(num_tokens_per_rdma_rank->size(0) == num_rdma_ranks);
+  EP_HOST_ASSERT(num_tokens_per_rank->size(0) == num_loop_stage);
+  EP_HOST_ASSERT(num_tokens_per_rdma_rank->size(0) == num_loop_stage);
 
   int num_scales = 0;
   if (x_scales.has_value()) {
@@ -1939,37 +1942,42 @@ Buffer::internode_fused_notify_combine(
   auto compute_stream = calc_ctx->stream();
   stream_wait(comm_stream, compute_stream);
 
-  auto rdma_channel_prefix_matrix = ConvertPaddleTensorToDetailTensor(
-      paddle::experimental::empty({num_rdma_ranks, num_channels},
+  auto rdma_channel_prefix_matrix =
+      ConvertPaddleTensorToDetailTensor(paddle::experimental::empty(
+          {num_loop_stage, num_rdma_ranks, num_channels},
+          phi::DataType::INT32,
+          phi::GPUPlace(device_id)));
+  auto recv_rdma_rank_prefix_sum = ConvertPaddleTensorToDetailTensor(
+      paddle::experimental::empty({num_loop_stage, num_rdma_ranks},
                                   phi::DataType::INT32,
                                   phi::GPUPlace(device_id)));
-  auto recv_rdma_rank_prefix_sum =
-      ConvertPaddleTensorToDetailTensor(paddle::experimental::empty(
-          {num_rdma_ranks}, phi::DataType::INT32, phi::GPUPlace(device_id)));
   auto gbl_channel_prefix_matrix = ConvertPaddleTensorToDetailTensor(
-      paddle::experimental::empty({num_ranks, num_channels},
+      paddle::experimental::empty({num_loop_stage, num_ranks, num_channels},
                                   phi::DataType::INT32,
                                   phi::GPUPlace(device_id)));
-  auto recv_gbl_rank_prefix_sum =
+  auto recv_gbl_rank_prefix_sum = ConvertPaddleTensorToDetailTensor(
+      paddle::experimental::empty({num_loop_stage, num_ranks},
+                                  phi::DataType::INT32,
+                                  phi::GPUPlace(device_id)));
+
+  auto recv_rdma_channel_prefix_matrix =
       ConvertPaddleTensorToDetailTensor(paddle::experimental::empty(
-          {num_ranks}, phi::DataType::INT32, phi::GPUPlace(device_id)));
-
-  auto recv_rdma_channel_prefix_matrix = ConvertPaddleTensorToDetailTensor(
-      paddle::experimental::empty({num_rdma_ranks, num_channels},
-                                  phi::DataType::INT32,
-                                  phi::GPUPlace(device_id)));
+          {num_loop_stage, num_rdma_ranks, num_channels},
+          phi::DataType::INT32,
+          phi::GPUPlace(device_id)));
   auto recv_gbl_channel_prefix_matrix = ConvertPaddleTensorToDetailTensor(
-      paddle::experimental::empty({num_ranks, num_channels},
+      paddle::experimental::empty({num_loop_stage, num_ranks, num_channels},
                                   phi::DataType::INT32,
                                   phi::GPUPlace(device_id)));
 
-  auto send_rdma_head = ConvertPaddleTensorToDetailTensor(
-      paddle::experimental::empty({num_tokens, num_ranks / NUM_MAX_NVL_PEERS},
-                                  phi::DataType::INT32,
-                                  phi::GPUPlace(device_id)));
+  auto send_rdma_head =
+      ConvertPaddleTensorToDetailTensor(paddle::experimental::empty(
+          {num_loop_stage, num_tokens, num_ranks / NUM_MAX_NVL_PEERS},
+          phi::DataType::INT32,
+          phi::GPUPlace(device_id)));
   auto send_nvl_head =
       ConvertPaddleTensorToDetailTensor(paddle::experimental::empty(
-          {num_tokens, num_ranks / NUM_MAX_NVL_PEERS, 8},
+          {num_loop_stage, num_tokens, num_ranks / NUM_MAX_NVL_PEERS, 8},
           phi::DataType::INT32,
           phi::GPUPlace(device_id)));
 

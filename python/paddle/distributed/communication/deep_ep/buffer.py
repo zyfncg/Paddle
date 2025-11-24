@@ -65,7 +65,7 @@ class Buffer:
         num_rdma_bytes: int = 0,
         low_latency_mode: bool = False,
         num_qps_per_rank: int = 12,
-        # num_loop_stages: int = 1,
+        num_loop_stages: int = 3,
     ) -> None:
         """
         Initialize the communication buffer.
@@ -89,6 +89,7 @@ class Buffer:
         self.runtime = CppBuffer(
             self.rank,
             self.group_size,
+            num_loop_stages,
             num_nvl_bytes,
             num_rdma_bytes,
             low_latency_mode,

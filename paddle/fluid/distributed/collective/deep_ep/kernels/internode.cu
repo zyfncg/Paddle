@@ -1134,7 +1134,6 @@ __global__ void fused_notify_combine(
     // Clean up for later data dispatch
     EP_DEVICE_ASSERT(rdma_recv_num_tokens_mixed.total_bytes <=
                      rdma_clean_offset * sizeof(int));
-
 #pragma unroll
     for (int i = thread_id; i < rdma_num_int_clean; i += num_threads)
       rdma_buffer_ptr_int[rdma_clean_offset + i] = 0;
@@ -1146,16 +1145,32 @@ __global__ void fused_notify_combine(
         rdma_recv_num_tokens_mixed.send_buffer(
             i / NUM_MAX_NVL_PEERS)[j * (NUM_MAX_NVL_PEERS + 1) +
                                    (i % NUM_MAX_NVL_PEERS)] =
-            num_tokens_per_rank[(j * 2 + 1) * num_ranks + i];
+            num_tokens_per_rank[j * num_ranks + i];
+        printf(
+            "# SM%d Send Rdma rank: %d -> %d, stage:%d, num_tokens_per_rank: "
+            "%d\n",
+            sm_id,
+            rank,
+            thread_id,
+            j,
+            num_tokens_per_rank[j * num_ranks + i]);
       }
     }
 
-#pragma unroll
     if (thread_id < kNumRDMARanks) {
+#pragma unroll
       for (int j = 0; j < num_loop_stage; ++j) {
         rdma_recv_num_tokens_mixed.send_buffer(
             thread_id)[j * (NUM_MAX_NVL_PEERS + 1) + NUM_MAX_NVL_PEERS] =
-            num_tokens_per_rdma_rank[j * num_ranks + thread_id];
+            num_tokens_per_rdma_rank[j * kNumRDMARanks + thread_id];
+        printf(
+            "# SM%d Send Rdma rank: %d -> %d, stage:%d, "
+            "num_tokens_per_rdma_rank: %d\n",
+            sm_id,
+            rank,
+            thread_id,
+            j,
+            num_tokens_per_rdma_rank[j * kNumRDMARanks + thread_id]);
       }
     }
 
@@ -1163,6 +1178,13 @@ __global__ void fused_notify_combine(
 
     // Issue send
     if (thread_id < kNumRDMARanks) {
+      printf(
+          "# SM%d rank: %d, thread_id: %d, kNumRDMARanks: %d "
+          "nvshmem_int_put_nbi\n",
+          sm_id,
+          rank,
+          thread_id,
+          kNumRDMARanks);
       nvshmem_int_put_nbi(
           rdma_recv_num_tokens_mixed.recv_buffer(rdma_rank),
           rdma_recv_num_tokens_mixed.send_buffer(thread_id),
@@ -1173,7 +1195,19 @@ __global__ void fused_notify_combine(
 
     // Barrier
     if (thread_id == 0) {
+      printf(
+          "#SM%d rank: %d, thread_id: %d, Before "
+          "nvshmem_barrier_with_same_gpu_idx\n",
+          sm_id,
+          rank,
+          thread_id);
       nvshmem_barrier_with_same_gpu_idx<kLowLatencyMode>(rdma_team);
+      printf(
+          "#SM%d rank: %d, thread_id: %d, After "
+          "nvshmem_barrier_with_same_gpu_idx\n",
+          sm_id,
+          rank,
+          thread_id);
     }
     __syncthreads();
 
@@ -1204,19 +1238,31 @@ __global__ void fused_notify_combine(
         sum += rdma_recv_num_tokens_mixed.recv_buffer(
             i)[thread_id * (NUM_MAX_NVL_PEERS + 1) + NUM_MAX_NVL_PEERS];
         recv_rdma_rank_prefix_sum[thread_id * kNumRDMARanks + i] = sum;
+        printf(
+            "####### SM0 Rdma Recv rank: %d <- %d, stage: %d "
+            "moe_recv_rdma_counter_mapped %d\n",
+            rank,
+            i,
+            thread_id,
+            sum);
       }
       while (ld_volatile_global(moe_recv_rdma_counter_mapped + thread_id) !=
              -1) {
       }
       moe_recv_rdma_counter_mapped[thread_id] = sum;
+      printf(
+          "####### rank: %d, thread_id: %d moe_recv_rdma_counter_mapped %d\n",
+          rank,
+          thread_id,
+          sum);
     }
 
     // Send numbers of tokens per rank/expert to NVL ranks
     EP_DEVICE_ASSERT(NUM_MAX_NVL_PEERS <= num_threads);
     if (thread_id < NUM_MAX_NVL_PEERS) {
+      for (int j = 0; j < num_loop_stage; ++j) {
 #pragma unroll
-      for (int i = 0; i < kNumRDMARanks; ++i) {
-        for (int j = 0; j < num_loop_stage; ++j) {
+        for (int i = 0; i < kNumRDMARanks; ++i) {
           nvl_send_num_tokens_per_rank.buffer(nvl_rank)[j * kNumRDMARanks + i] =
               rdma_recv_num_tokens_mixed.recv_buffer(
                   i)[j * (NUM_MAX_NVL_PEERS + 1) + thread_id];
@@ -1231,6 +1277,9 @@ __global__ void fused_notify_combine(
     __syncthreads();
 
     if (thread_id < num_loop_stage) {
+      printf("####### rank: %d, thread_id: %d recv_gbl_rank_prefix_sum\n",
+             rank,
+             thread_id);
       int sum = 0;
 #pragma unroll
       for (int i = 0; i < num_ranks; ++i) {
@@ -1243,6 +1292,10 @@ __global__ void fused_notify_combine(
       while (ld_volatile_global(moe_recv_counter_mapped + thread_id) != -1) {
       }
       moe_recv_counter_mapped[thread_id] = sum;
+      printf("####### rank: %d, thread_id: %d moe_recv_counter_mapped %d\n",
+             rank,
+             thread_id,
+             sum);
     }
 
     // Finally barrier
@@ -1250,15 +1303,25 @@ __global__ void fused_notify_combine(
       nvshmem_barrier_with_same_gpu_idx<kLowLatencyMode>(rdma_team);
     barrier_device<NUM_MAX_NVL_PEERS>(task_fifo_ptrs, head, nvl_rank);
     move_fifo_slots<NUM_MAX_NVL_PEERS>(head);
+    printf(
+        "####### SM: %d, thread_id: %d, Send Recv Finish\n", sm_id, thread_id);
   } else {
     // Calculate meta data
-    int stage_id = (sm_id - 1) / num_loop_stage;
-    int dst_rdma_rank = (sm_id - 1) % num_loop_stage;
+    int stage_id = (sm_id - 1) / kNumRDMARanks;
+    int dst_rdma_rank = (sm_id - 1) % kNumRDMARanks;
     for (int channel_id = warp_id; channel_id < num_channels;
          channel_id += num_warps) {
       int token_start_idx, token_end_idx;
       get_channel_task_range(
           num_tokens, num_channels, channel_id, token_start_idx, token_end_idx);
+      if (lane_id == 0)
+        printf(
+            "####### SM: %d, thread_id: %d, channel_id: %d, token[%d-%d], \n",
+            sm_id,
+            thread_id,
+            channel_id,
+            token_start_idx,
+            token_end_idx);
 
       // Iterate over tokens
       int total_count = 0, per_nvl_rank_count[NUM_MAX_NVL_PEERS] = {0};
@@ -1277,6 +1340,11 @@ __global__ void fused_notify_combine(
 
         // Calculate RDMA tail index for combine
         auto warp_valid_tokens = std::min(token_end_idx - (i - lane_id), 32);
+        // if (warp_valid_tokens < 32) {
+        //   printf("####### SM: %d, channel: %d, lane_id: %d, token(%d-%d)[%d],
+        //   warp_valid_tokens: %d \n", sm_id, channel_id, lane_id,
+        //   token_start_idx, token_end_idx, i, warp_valid_tokens);
+        // }
         unsigned int mask = 0xffffffff >> (32 - warp_valid_tokens);
         int warp_rdma_tail_idx = (is_token_in_rank_uint64 != 0);
         global_rdma_tail_idx += warp_scan(warp_rdma_tail_idx, mask);
@@ -1286,6 +1354,10 @@ __global__ void fused_notify_combine(
                        dst_rdma_rank] = rdma_tail_idx;
         global_rdma_tail_idx =
             __shfl_sync(mask, global_rdma_tail_idx, warp_valid_tokens - 1);
+        // if (lane_id == 0)
+        //   printf("####### SM: %d, channel: %d, lane_id: %d, token(%d-%d)[%d],
+        //   global_rdma_tail_idx: %d, \n", sm_id, channel_id, lane_id,
+        //   token_start_idx, token_end_idx, i, global_rdma_tail_idx);
 
 #pragma unroll
         for (int j = 0; j < NUM_MAX_NVL_PEERS; ++j) {
@@ -1300,22 +1372,62 @@ __global__ void fused_notify_combine(
           global_nvl_tail_idx[j] =
               __shfl_sync(mask, global_nvl_tail_idx[j], warp_valid_tokens - 1);
         }
+        if (lane_id == 0)
+          printf(
+              "####### SM: %d, channel: %d, lane_id: %d, token(%d-%d)[%d], "
+              "global_nvl_tail_idx: %d\n",
+              sm_id,
+              channel_id,
+              lane_id,
+              token_start_idx,
+              token_end_idx,
+              i,
+              global_nvl_tail_idx[0]);
       }
 
       // Warp reduce
       total_count = warp_reduce_sum(total_count);
+      if (lane_id == 0)
+        printf("####### SM: %d, stage: %d, [%d -> %d] channel[%d]=%d\n",
+               sm_id,
+               stage_id,
+               rank,
+               dst_rdma_rank,
+               channel_id,
+               total_count);
 #pragma unroll
       for (int i = 0; i < NUM_MAX_NVL_PEERS; ++i)
         per_nvl_rank_count[i] = warp_reduce_sum(per_nvl_rank_count[i]);
 
       // Write into channel matrix
       if (lane_id == 0) {
+        // printf("####### sm: %d warp_id: %d, compute
+        // gbl_channel_prefix_matrix\n", sm_id, warp_id);
 #pragma unroll
         for (int i = 0; i < NUM_MAX_NVL_PEERS; ++i)
-          gbl_channel_prefix_matrix[(stage_id * num_ranks +
-                                     dst_rdma_rank * NUM_MAX_NVL_PEERS + i) *
-                                        num_channels +
-                                    channel_id] = per_nvl_rank_count[i];
+          printf(
+              "####### sm: %d warp_id: %d, compute "
+              "gbl_channel_prefix_matrix[%d][%d] per_nvl_rank_count[%d]=%d\n",
+              sm_id,
+              warp_id,
+              (stage_id * num_ranks + dst_rdma_rank * NUM_MAX_NVL_PEERS + i),
+              channel_id,
+              i,
+              per_nvl_rank_count[i]);
+        // gbl_channel_prefix_matrix[(stage_id * num_ranks +
+        //                            dst_rdma_rank * NUM_MAX_NVL_PEERS + i) *
+        //                               num_channels +
+        //                           channel_id] = per_nvl_rank_count[i];
+        printf(
+            "####### sm: %d warp_id: %d, dst_rdma_rank: %d, stage_id: %d, "
+            "compute  rdma_channel_prefix_matrix[%d][%d]=%d\n",
+            sm_id,
+            warp_id,
+            dst_rdma_rank,
+            stage_id,
+            (stage_id * kNumRDMARanks + dst_rdma_rank),
+            channel_id,
+            total_count);
         rdma_channel_prefix_matrix[(stage_id * kNumRDMARanks + dst_rdma_rank) *
                                        num_channels +
                                    channel_id] = total_count;
@@ -1325,6 +1437,13 @@ __global__ void fused_notify_combine(
     // Calculate prefix sum
     __syncthreads();
     if (thread_id == 0) {
+      printf(
+          "####### rank: %d, sm: %d warp_id: %d,  thread_id: %d, "
+          "rdma_channel_prefix_matrix\n",
+          rank,
+          sm_id,
+          warp_id,
+          thread_id);
       auto prefix_row =
           rdma_channel_prefix_matrix +
           (stage_id * kNumRDMARanks + dst_rdma_rank) * num_channels;
@@ -1345,6 +1464,7 @@ __global__ void fused_notify_combine(
         prefix_row[i] += prefix_row[i - 1];
       }
     }
+    printf("####### SM: %d, thread_id: %d, Compute Finish\n", sm_id, thread_id);
   }
 }
 
